@@ -1,0 +1,23 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="512" height="512" rx="115" fill="#0f0f0f"/>
+
+  <!-- Outer Ring - thin -->
+  <circle cx="256" cy="256" r="170" stroke="#222" stroke-width="14"/>
+  <circle cx="256" cy="256" r="170" stroke="#D97706" stroke-width="14" stroke-linecap="round"
+          stroke-dasharray="747.7 1068.1" transform="rotate(-90 256 256)"/>
+
+  <!-- Inner Ring - thin -->
+  <circle cx="256" cy="256" r="130" stroke="#222" stroke-width="14"/>
+  <circle cx="256" cy="256" r="130" stroke="#10A37F" stroke-width="14" stroke-linecap="round"
+          stroke-dasharray="653.5 816.8" transform="rotate(-90 256 256)"/>
+
+  <!-- Minimal needle -->
+  <g transform="rotate(45 256 256)">
+    <line x1="256" y1="256" x2="256" y2="145" stroke="#ffffff" stroke-width="3" stroke-linecap="round"/>
+  </g>
+
+  <!-- Tiny center dot -->
+  <circle cx="256" cy="256" r="6" fill="#333"/>
+  <circle cx="256" cy="256" r="3" fill="#666"/>
+</svg>

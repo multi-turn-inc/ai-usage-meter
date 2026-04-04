@@ -1,0 +1,23 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="512" height="512" rx="115" fill="#0d0d0d"/>
+
+  <!-- Outer Ring -->
+  <circle cx="256" cy="256" r="168" stroke="#1f1f1f" stroke-width="18"/>
+  <circle cx="256" cy="256" r="168" stroke="#D97706" stroke-width="18" stroke-linecap="round"
+          stroke-dasharray="738.9 1055.6" transform="rotate(-90 256 256)"/>
+
+  <!-- Inner Ring -->
+  <circle cx="256" cy="256" r="125" stroke="#1f1f1f" stroke-width="18"/>
+  <circle cx="256" cy="256" r="125" stroke="#10A37F" stroke-width="18" stroke-linecap="round"
+          stroke-dasharray="628.3 785.4" transform="rotate(-90 256 256)"/>
+
+  <!-- Tapered needle (thick at center, thin at tip) -->
+  <g transform="rotate(40 256 256)">
+    <path d="M253 256 L256 140 L259 256 Z" fill="#ffffff" opacity="0.95"/>
+  </g>
+
+  <!-- Clean center circle -->
+  <circle cx="256" cy="256" r="12" fill="#1a1a1a"/>
+  <circle cx="256" cy="256" r="5" fill="#444"/>
+</svg>

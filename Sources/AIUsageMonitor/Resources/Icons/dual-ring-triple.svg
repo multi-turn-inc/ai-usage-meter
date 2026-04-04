@@ -1,0 +1,23 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="512" height="512" rx="115" fill="#1a1a1a"/>
+
+  <!-- Outer Ring (Claude - Orange) -->
+  <circle cx="256" cy="256" r="175" stroke="#333333" stroke-width="24"/>
+  <circle cx="256" cy="256" r="175" stroke="#D97706" stroke-width="24" stroke-linecap="round"
+          stroke-dasharray="769.7 1099.6" transform="rotate(-90 256 256)"/>
+
+  <!-- Middle Ring (OpenAI - Teal) -->
+  <circle cx="256" cy="256" r="130" stroke="#333333" stroke-width="24"/>
+  <circle cx="256" cy="256" r="130" stroke="#10A37F" stroke-width="24" stroke-linecap="round"
+          stroke-dasharray="653.5 816.8" transform="rotate(-90 256 256)"/>
+
+  <!-- Inner Ring (Gemini - Blue) -->
+  <circle cx="256" cy="256" r="85" stroke="#333333" stroke-width="24"/>
+  <circle cx="256" cy="256" r="85" stroke="#4285F4" stroke-width="24" stroke-linecap="round"
+          stroke-dasharray="374.1 534.1" transform="rotate(-90 256 256)"/>
+
+  <!-- Center dot -->
+  <circle cx="256" cy="256" r="20" fill="#2a2a2a" stroke="#444" stroke-width="2"/>
+  <circle cx="256" cy="256" r="8" fill="#666"/>
+</svg>

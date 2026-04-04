@@ -1,0 +1,45 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="512" height="512" rx="115" fill="#090909"/>
+
+  <!-- Scale marks around outer edge -->
+  <g stroke="#2a2a2a" stroke-width="2">
+    <line x1="256" y1="60" x2="256" y2="75" transform="rotate(0 256 256)"/>
+    <line x1="256" y1="60" x2="256" y2="72" transform="rotate(30 256 256)"/>
+    <line x1="256" y1="60" x2="256" y2="72" transform="rotate(60 256 256)"/>
+    <line x1="256" y1="60" x2="256" y2="75" transform="rotate(90 256 256)"/>
+    <line x1="256" y1="60" x2="256" y2="72" transform="rotate(120 256 256)"/>
+    <line x1="256" y1="60" x2="256" y2="72" transform="rotate(150 256 256)"/>
+    <line x1="256" y1="60" x2="256" y2="75" transform="rotate(180 256 256)"/>
+    <line x1="256" y1="60" x2="256" y2="72" transform="rotate(210 256 256)"/>
+    <line x1="256" y1="60" x2="256" y2="72" transform="rotate(240 256 256)"/>
+    <line x1="256" y1="60" x2="256" y2="75" transform="rotate(270 256 256)"/>
+    <line x1="256" y1="60" x2="256" y2="72" transform="rotate(300 256 256)"/>
+    <line x1="256" y1="60" x2="256" y2="72" transform="rotate(330 256 256)"/>
+  </g>
+
+  <!-- Outer Ring -->
+  <circle cx="256" cy="256" r="160" stroke="#1c1c1c" stroke-width="32"/>
+  <circle cx="256" cy="256" r="160" stroke="#D97706" stroke-width="32" stroke-linecap="round"
+          stroke-dasharray="703.7 1005.3" transform="rotate(-90 256 256)"/>
+
+  <!-- Inner Ring -->
+  <circle cx="256" cy="256" r="105" stroke="#1c1c1c" stroke-width="32"/>
+  <circle cx="256" cy="256" r="105" stroke="#10A37F" stroke-width="32" stroke-linecap="round"
+          stroke-dasharray="528.0 659.7" transform="rotate(-90 256 256)"/>
+
+  <!-- Double needle with tips -->
+  <g transform="rotate(52 256 256)">
+    <path d="M256 250 L256 110" stroke="#D97706" stroke-width="6" stroke-linecap="round"/>
+    <circle cx="256" cy="110" r="6" fill="#D97706"/>
+  </g>
+  <g transform="rotate(82 256 256)">
+    <path d="M256 250 L256 155" stroke="#10A37F" stroke-width="5" stroke-linecap="round"/>
+    <circle cx="256" cy="155" r="5" fill="#10A37F"/>
+  </g>
+
+  <!-- Center hub with usage indicator -->
+  <circle cx="256" cy="256" r="38" fill="#131313"/>
+  <text x="256" y="252" text-anchor="middle" fill="#888" font-family="SF Pro, Helvetica" font-size="18" font-weight="500">USAGE</text>
+  <text x="256" y="275" text-anchor="middle" fill="#D97706" font-family="SF Pro, Helvetica" font-size="16" font-weight="600">75%</text>
+</svg>

@@ -1,0 +1,26 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="512" height="512" rx="115" fill="#0b0b0b"/>
+
+  <!-- Outer Ring - thicker -->
+  <circle cx="256" cy="256" r="165" stroke="#1c1c1c" stroke-width="28"/>
+  <circle cx="256" cy="256" r="165" stroke="#D97706" stroke-width="28" stroke-linecap="round"
+          stroke-dasharray="725.7 1036.7" transform="rotate(-90 256 256)"/>
+
+  <!-- Inner Ring - thicker -->
+  <circle cx="256" cy="256" r="115" stroke="#1c1c1c" stroke-width="28"/>
+  <circle cx="256" cy="256" r="115" stroke="#10A37F" stroke-width="28" stroke-linecap="round"
+          stroke-dasharray="578.1 722.6" transform="rotate(-90 256 256)"/>
+
+  <!-- Double needle - thicker -->
+  <g transform="rotate(50 256 256)">
+    <line x1="256" y1="250" x2="256" y2="115" stroke="#D97706" stroke-width="5" stroke-linecap="round"/>
+  </g>
+  <g transform="rotate(80 256 256)">
+    <line x1="256" y1="250" x2="256" y2="150" stroke="#10A37F" stroke-width="4" stroke-linecap="round"/>
+  </g>
+
+  <!-- Center with "AI" text -->
+  <circle cx="256" cy="256" r="45" fill="#151515"/>
+  <text x="256" y="268" text-anchor="middle" fill="#666" font-family="SF Pro, Helvetica" font-size="32" font-weight="600">AI</text>
+</svg>

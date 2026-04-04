@@ -1,0 +1,14 @@
+<?xml version="1.0" standalone="yes"?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>AI Usage Monitor</title>
+        <item>
+            <title>3.0.2</title>
+            <pubDate>Mon, 09 Feb 2026 12:49:37 +0900</pubDate>
+            <sparkle:version>3.0.2</sparkle:version>
+            <sparkle:shortVersionString>3.0.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/multi-turn-inc/ai-usage-meter/releases/download/v3.0.2/AIUsageMonitor-3.0.2.dmg" length="1833498" type="application/octet-stream" sparkle:edSignature="gDYmT1hRUUDtFwHI7TgeQjNnKlNqP6RZ0jln1NnhHVCYvu8prIPrZD/WLSOUiZVXsPCChSGrgXc8bHFTwJmqAQ=="/>
+        </item>
+    </channel>
+</rss>

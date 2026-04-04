@@ -1,0 +1,24 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="512" height="512" rx="115" fill="#0c0c0c"/>
+
+  <!-- Single unified ring track -->
+  <circle cx="256" cy="256" r="150" stroke="#1a1a1a" stroke-width="40"/>
+
+  <!-- Outer portion - Orange -->
+  <circle cx="256" cy="256" r="165" stroke="#D97706" stroke-width="12" stroke-linecap="round"
+          stroke-dasharray="725.7 1036.7" transform="rotate(-90 256 256)"/>
+
+  <!-- Inner portion - Teal -->
+  <circle cx="256" cy="256" r="135" stroke="#10A37F" stroke-width="12" stroke-linecap="round"
+          stroke-dasharray="678.6 848.2" transform="rotate(-90 256 256)"/>
+
+  <!-- Elegant thin needle -->
+  <g transform="rotate(45 256 256)">
+    <line x1="256" y1="256" x2="256" y2="100" stroke="#ffffff" stroke-width="2" stroke-linecap="round"/>
+    <circle cx="256" cy="105" r="4" fill="#ffffff"/>
+  </g>
+
+  <!-- Minimal hub -->
+  <circle cx="256" cy="256" r="8" fill="#222"/>
+</svg>

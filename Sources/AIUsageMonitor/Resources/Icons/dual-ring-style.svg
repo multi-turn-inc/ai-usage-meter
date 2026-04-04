@@ -1,0 +1,18 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background: Rounded Square -->
+  <rect width="512" height="512" rx="115" fill="#1a1a1a"/>
+
+  <!-- Outer Ring Track (Background) -->
+  <circle cx="256" cy="256" r="160" stroke="#333333" stroke-width="32"/>
+
+  <!-- Outer Ring Progress: Orange #D97706, 70% -->
+  <circle cx="256" cy="256" r="160" stroke="#D97706" stroke-width="32" stroke-linecap="round"
+          stroke-dasharray="703.7 1005.3" transform="rotate(-90 256 256)"/>
+
+  <!-- Inner Ring Track (Background) -->
+  <circle cx="256" cy="256" r="110" stroke="#333333" stroke-width="32"/>
+
+  <!-- Inner Ring Progress: Teal #10A37F, 80% -->
+  <circle cx="256" cy="256" r="110" stroke="#10A37F" stroke-width="32" stroke-linecap="round"
+          stroke-dasharray="552.9 691.2" transform="rotate(-90 256 256)"/>
+</svg>
