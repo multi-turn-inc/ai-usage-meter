@@ -1,0 +1,31 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="512" height="512" rx="115" fill="#0a0a0a"/>
+
+  <!-- Outer Ring -->
+  <circle cx="256" cy="256" r="168" stroke="#1a1a1a" stroke-width="30"/>
+  <circle cx="256" cy="256" r="168" stroke="#D97706" stroke-width="30" stroke-linecap="round"
+          stroke-dasharray="738.9 1055.6" transform="rotate(-90 256 256)"/>
+
+  <!-- Inner Ring -->
+  <circle cx="256" cy="256" r="112" stroke="#1a1a1a" stroke-width="30"/>
+  <circle cx="256" cy="256" r="112" stroke="#10A37F" stroke-width="30" stroke-linecap="round"
+          stroke-dasharray="563.1 703.7" transform="rotate(-90 256 256)"/>
+
+  <!-- Double needle -->
+  <g transform="rotate(48 256 256)">
+    <line x1="256" y1="248" x2="256" y2="108" stroke="#D97706" stroke-width="6" stroke-linecap="round"/>
+  </g>
+  <g transform="rotate(76 256 256)">
+    <line x1="256" y1="248" x2="256" y2="145" stroke="#10A37F" stroke-width="5" stroke-linecap="round"/>
+  </g>
+
+  <!-- Neural network dots in center -->
+  <circle cx="256" cy="256" r="40" fill="#121212"/>
+  <circle cx="245" cy="245" r="6" fill="#D97706" opacity="0.9"/>
+  <circle cx="270" cy="248" r="5" fill="#10A37F" opacity="0.9"/>
+  <circle cx="255" cy="270" r="5" fill="#555" opacity="0.8"/>
+  <line x1="245" y1="245" x2="270" y2="248" stroke="#333" stroke-width="2"/>
+  <line x1="245" y1="245" x2="255" y2="270" stroke="#333" stroke-width="2"/>
+  <line x1="270" y1="248" x2="255" y2="270" stroke="#333" stroke-width="2"/>
+</svg>

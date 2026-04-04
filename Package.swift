@@ -2,14 +2,14 @@
 import PackageDescription
 
 let package = Package(
-    name: "AIUsageMonitor",
+    name: "AIUsageMeter",
     platforms: [
         .macOS("26.0")
     ],
     products: [
         .executable(
-            name: "AIUsageMonitor",
-            targets: ["AIUsageMonitor"]
+            name: "AIUsageMeter",
+            targets: ["AIUsageMeter"]
         )
     ],
     dependencies: [
@@ -17,11 +17,11 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "AIUsageMonitor",
+            name: "AIUsageMeter",
             dependencies: [
                 .product(name: "Sparkle", package: "Sparkle"),
             ],
-            path: "Sources/AIUsageMonitor",
+            path: "Sources/AIUsageMeter",
             resources: [
                 .process("Resources/Icons"),
                 .copy("Resources/Scripts/updater.sh"),

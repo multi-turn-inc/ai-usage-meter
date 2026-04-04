@@ -1,0 +1,26 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="512" height="512" rx="115" fill="#0b0b0b"/>
+
+  <!-- Outer Ring -->
+  <circle cx="256" cy="256" r="170" stroke="#1c1c1c" stroke-width="16"/>
+  <circle cx="256" cy="256" r="170" stroke="#D97706" stroke-width="16" stroke-linecap="round"
+          stroke-dasharray="747.7 1068.1" transform="rotate(-90 256 256)"/>
+
+  <!-- Inner Ring -->
+  <circle cx="256" cy="256" r="125" stroke="#1c1c1c" stroke-width="16"/>
+  <circle cx="256" cy="256" r="125" stroke="#10A37F" stroke-width="16" stroke-linecap="round"
+          stroke-dasharray="628.3 785.4" transform="rotate(-90 256 256)"/>
+
+  <!-- Double needle (hour + minute hand style) -->
+  <g transform="rotate(45 256 256)">
+    <line x1="256" y1="256" x2="256" y2="125" stroke="#D97706" stroke-width="3" stroke-linecap="round"/>
+  </g>
+  <g transform="rotate(72 256 256)">
+    <line x1="256" y1="256" x2="256" y2="155" stroke="#10A37F" stroke-width="2" stroke-linecap="round"/>
+  </g>
+
+  <!-- Center hub -->
+  <circle cx="256" cy="256" r="8" fill="#1a1a1a"/>
+  <circle cx="256" cy="256" r="4" fill="#444"/>
+</svg>

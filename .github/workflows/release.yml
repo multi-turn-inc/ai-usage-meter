@@ -81,14 +81,14 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            .build/release/AIUsageMonitor-${{ steps.version.outputs.VERSION }}.dmg
+            .build/release/AIUsageMeter-${{ steps.version.outputs.VERSION }}.dmg
             .build/release/appcast.xml
           body: |
-            ## AI Usage Monitor v${{ steps.version.outputs.VERSION }}
+            ## AI Usage Meter v${{ steps.version.outputs.VERSION }}
 
             ### Installation
             1. Download the DMG file
-            2. Open the DMG and drag "AI Usage Monitor" to Applications
+            2. Open the DMG and drag "AI Usage Meter" to Applications
             3. Launch the app (signed + notarized)
 
             ### Requirements

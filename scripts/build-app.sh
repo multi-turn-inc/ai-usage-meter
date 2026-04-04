@@ -1,8 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-APP_NAME="AI Usage Monitor"
-BUNDLE_ID="com.aiusagemonitor"
+APP_NAME="AI Usage Meter"
+BUNDLE_ID="com.aiusagemeter"
 VERSION="${1:-1.0.0}"
 BUILD_DIR=".build/release"
 APP_BUNDLE="$BUILD_DIR/$APP_NAME.app"
@@ -12,7 +12,7 @@ APPLE_ID="${APPLE_ID:-}"
 APPLE_APP_SPECIFIC_PASSWORD="${APPLE_APP_SPECIFIC_PASSWORD:-}"
 NOTARIZE="${NOTARIZE:-}"
 
-echo "🔨 Building AI Usage Monitor v$VERSION..."
+echo "🔨 Building AI Usage Meter v$VERSION..."
 
 swift build -c release
 
@@ -22,17 +22,17 @@ mkdir -p "$APP_BUNDLE/Contents/Resources"
 mkdir -p "$APP_BUNDLE/Contents/Resources/Scripts"
 mkdir -p "$APP_BUNDLE/Contents/Frameworks"
 
-cp "$BUILD_DIR/AIUsageMonitor" "$APP_BUNDLE/Contents/MacOS/"
+cp "$BUILD_DIR/AIUsageMeter" "$APP_BUNDLE/Contents/MacOS/"
 
 if [ -d "$BUILD_DIR/Sparkle.framework" ]; then
     cp -R "$BUILD_DIR/Sparkle.framework" "$APP_BUNDLE/Contents/Frameworks/"
-    if ! otool -l "$APP_BUNDLE/Contents/MacOS/AIUsageMonitor" | grep -q "@executable_path/../Frameworks"; then
-        install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP_BUNDLE/Contents/MacOS/AIUsageMonitor"
+    if ! otool -l "$APP_BUNDLE/Contents/MacOS/AIUsageMeter" | grep -q "@executable_path/../Frameworks"; then
+        install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP_BUNDLE/Contents/MacOS/AIUsageMeter"
     fi
 fi
 
-if [ -f "Sources/AIUsageMonitor/Resources/Scripts/updater.sh" ]; then
-    cp "Sources/AIUsageMonitor/Resources/Scripts/updater.sh" "$APP_BUNDLE/Contents/Resources/Scripts/"
+if [ -f "Sources/AIUsageMeter/Resources/Scripts/updater.sh" ]; then
+    cp "Sources/AIUsageMeter/Resources/Scripts/updater.sh" "$APP_BUNDLE/Contents/Resources/Scripts/"
     chmod +x "$APP_BUNDLE/Contents/Resources/Scripts/updater.sh"
 fi
 
@@ -59,7 +59,7 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << EOF
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleExecutable</key>
-    <string>AIUsageMonitor</string>
+    <string>AIUsageMeter</string>
     <key>LSMinimumSystemVersion</key>
     <string>26.0</string>
     <key>CFBundleIconFile</key>
@@ -89,7 +89,7 @@ codesign --force --deep --options runtime --timestamp --sign "$SIGNING_IDENTITY"
 codesign --verify --verbose "$APP_BUNDLE"
 echo "✅ App signed successfully"
 
-DMG_NAME="AIUsageMonitor-$VERSION.dmg"
+DMG_NAME="AIUsageMeter-$VERSION.dmg"
 DMG_PATH="$BUILD_DIR/$DMG_NAME"
 
 echo "📦 Creating DMG..."

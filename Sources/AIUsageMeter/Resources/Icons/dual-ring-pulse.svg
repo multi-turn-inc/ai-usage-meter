@@ -1,0 +1,24 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="512" height="512" rx="115" fill="#1a1a1a"/>
+
+  <!-- Outer Ring Track -->
+  <circle cx="256" cy="256" r="160" stroke="#333333" stroke-width="32"/>
+  <!-- Outer Ring Progress: Orange 70% -->
+  <circle cx="256" cy="256" r="160" stroke="#D97706" stroke-width="32" stroke-linecap="round"
+          stroke-dasharray="703.7 1005.3" transform="rotate(-90 256 256)"/>
+
+  <!-- Inner Ring Track -->
+  <circle cx="256" cy="256" r="110" stroke="#333333" stroke-width="32"/>
+  <!-- Inner Ring Progress: Teal 80% -->
+  <circle cx="256" cy="256" r="110" stroke="#10A37F" stroke-width="32" stroke-linecap="round"
+          stroke-dasharray="552.9 691.2" transform="rotate(-90 256 256)"/>
+
+  <!-- Heartbeat/Pulse line in center -->
+  <path d="M180 256 L210 256 L225 256 L235 220 L250 290 L265 230 L275 270 L285 256 L300 256 L330 256"
+        fill="none" stroke="#10A37F" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Small glow dots at peaks -->
+  <circle cx="235" cy="220" r="4" fill="#10A37F" opacity="0.8"/>
+  <circle cx="250" cy="290" r="4" fill="#D97706" opacity="0.8"/>
+</svg>
