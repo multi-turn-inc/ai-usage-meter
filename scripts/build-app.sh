@@ -75,7 +75,7 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << EOF
     <key>SUFeedURL</key>
     <string>https://github.com/multi-turn-inc/ai-usage-meter/releases/latest/download/appcast.xml</string>
     <key>SUPublicEDKey</key>
-    <string>iAtZSYvS7Gk6Xs/gONrL98ZxOEFNXsHrd8/Cyi8z/os=</string>
+    <string>OFZWN3IMKCwZ7nWqf8hreBnNLdPLe0LxleGaTFbXFmo=</string>
 </dict>
 </plist>
 EOF
