@@ -12,9 +12,6 @@ Keep tabs on Claude and Codex usage without leaving your workflow.
 [![GitHub release](https://img.shields.io/github/v/release/multi-turn-inc/ai-usage-meter?include_prereleases)](../../releases)
 
 <br>
-
-<img src="docs/screenshot-main.png" width="320" alt="AI Usage Meter - Main Panel">
-&nbsp;&nbsp;&nbsp;
 <img src="docs/screenshot-settings.png" width="320" alt="AI Usage Meter - Settings">
 
 </div>
