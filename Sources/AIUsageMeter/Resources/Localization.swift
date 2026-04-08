@@ -642,6 +642,36 @@ class LocalizationManager {
         case .italian: return "Dona"
         }
     }
+
+    var includeDiagnostics: String {
+        switch currentLanguage {
+        case .english: return "Include diagnostics"
+        case .korean: return "진단 정보 포함"
+        case .japanese: return "診断情報を含める"
+        case .chinese: return "包含诊断信息"
+        case .spanish: return "Incluir diagnósticos"
+        case .french: return "Inclure les diagnostics"
+        case .german: return "Diagnosedaten einschließen"
+        case .portuguese: return "Incluir diagnósticos"
+        case .russian: return "Включить диагностику"
+        case .italian: return "Includi diagnostica"
+        }
+    }
+
+    var viewDiagnostics: String {
+        switch currentLanguage {
+        case .english: return "View included data"
+        case .korean: return "포함될 정보 보기"
+        case .japanese: return "含まれるデータを確認"
+        case .chinese: return "查看包含的数据"
+        case .spanish: return "Ver datos incluidos"
+        case .french: return "Voir les données incluses"
+        case .german: return "Enthaltene Daten anzeigen"
+        case .portuguese: return "Ver dados incluídos"
+        case .russian: return "Просмотреть данные"
+        case .italian: return "Visualizza dati inclusi"
+        }
+    }
 }
 
 // Global accessor

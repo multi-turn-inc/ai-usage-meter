@@ -1120,6 +1120,8 @@ struct SupportSection: View {
 struct BugReportPanel: View {
     @Binding var isPresented: Bool
     @State private var reportText: String = ""
+    @State private var includeDiagnostics: Bool = true
+    @State private var showDiagnosticPreview: Bool = false
     @State private var isSending = false
     @State private var sent = false
 
@@ -1157,73 +1159,121 @@ struct BugReportPanel: View {
                 .padding(.vertical, 40)
                 .transition(.scale.combined(with: .opacity))
             } else {
-                VStack(spacing: 12) {
-                    TextEditor(text: $reportText)
-                        .font(.system(size: 13))
-                        .scrollContentBackground(.hidden)
+                ScrollView {
+                    VStack(spacing: 12) {
+                        TextEditor(text: $reportText)
+                            .font(.system(size: 13))
+                            .scrollContentBackground(.hidden)
+                            .padding(10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(Color(nsColor: .textBackgroundColor).opacity(0.3))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 10)
+                                            .stroke(Color(nsColor: .separatorColor).opacity(0.3))
+                                    )
+                            )
+                            .frame(minHeight: 100)
+                            .overlay(alignment: .topLeading) {
+                                if reportText.isEmpty {
+                                    Text(L.bugReportPlaceholder)
+                                        .font(.system(size: 13))
+                                        .foregroundStyle(.tertiary)
+                                        .padding(.horizontal, 14)
+                                        .padding(.vertical, 18)
+                                        .allowsHitTesting(false)
+                                }
+                            }
+
+                        // Diagnostics toggle
+                        VStack(spacing: 8) {
+                            HStack {
+                                Image(systemName: "stethoscope")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+                                Text(L.includeDiagnostics)
+                                    .font(.system(size: 12, weight: .medium))
+                                Spacer()
+                                Toggle("", isOn: $includeDiagnostics)
+                                    .toggleStyle(.switch)
+                                    .tint(.accentColor)
+                                    .labelsHidden()
+                                    .scaleEffect(0.7)
+                                    .frame(width: 36, height: 20)
+                            }
+
+                            if includeDiagnostics {
+                                Button {
+                                    showDiagnosticPreview.toggle()
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Text(L.viewDiagnostics)
+                                            .font(.system(size: 11))
+                                        Image(systemName: showDiagnosticPreview ? "chevron.up" : "chevron.down")
+                                            .font(.system(size: 9, weight: .semibold))
+                                    }
+                                    .foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.plain)
+
+                                if showDiagnosticPreview {
+                                    Text(DiagnosticCollector.collect())
+                                        .font(.system(size: 10, design: .monospaced))
+                                        .foregroundStyle(.tertiary)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(8)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 8)
+                                                .fill(Color(nsColor: .textBackgroundColor).opacity(0.2))
+                                        )
+                                        .transition(.opacity.combined(with: .move(edge: .top)))
+                                }
+                            }
+                        }
                         .padding(10)
                         .background(
                             RoundedRectangle(cornerRadius: 10)
-                                .fill(Color(nsColor: .textBackgroundColor).opacity(0.3))
+                                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.3))
                                 .overlay(
                                     RoundedRectangle(cornerRadius: 10)
-                                        .stroke(Color(nsColor: .separatorColor).opacity(0.3))
+                                        .stroke(Color(nsColor: .separatorColor).opacity(0.2))
                                 )
                         )
-                        .frame(minHeight: 120)
-                        .overlay(alignment: .topLeading) {
-                            if reportText.isEmpty {
-                                Text(L.bugReportPlaceholder)
-                                    .font(.system(size: 13))
-                                    .foregroundStyle(.tertiary)
-                                    .padding(.horizontal, 14)
-                                    .padding(.vertical, 18)
-                                    .allowsHitTesting(false)
-                            }
-                        }
+                        .animation(.easeInOut(duration: 0.2), value: includeDiagnostics)
+                        .animation(.easeInOut(duration: 0.2), value: showDiagnosticPreview)
 
-                    HStack {
-                        Text(systemInfoSummary)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.tertiary)
-                            .lineLimit(1)
-
-                        Spacer()
-
-                        Button {
-                            sendReport()
-                        } label: {
-                            HStack(spacing: 6) {
-                                if isSending {
-                                    ProgressView()
-                                        .scaleEffect(0.6)
-                                        .frame(width: 14, height: 14)
-                                } else {
-                                    Image(systemName: "paperplane.fill")
-                                        .font(.system(size: 12))
+                        HStack {
+                            Spacer()
+                            Button {
+                                sendReport()
+                            } label: {
+                                HStack(spacing: 6) {
+                                    if isSending {
+                                        ProgressView()
+                                            .scaleEffect(0.6)
+                                            .frame(width: 14, height: 14)
+                                    } else {
+                                        Image(systemName: "paperplane.fill")
+                                            .font(.system(size: 12))
+                                    }
+                                    Text(L.send)
+                                        .font(.system(size: 13, weight: .semibold))
                                 }
-                                Text(L.send)
-                                    .font(.system(size: 13, weight: .semibold))
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 8)
                             }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
+                            .buttonStyle(.glassProminent)
+                            .buttonBorderShape(.capsule)
+                            .disabled(reportText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSending)
                         }
-                        .buttonStyle(.glassProminent)
-                        .buttonBorderShape(.capsule)
-                        .disabled(reportText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSending)
                     }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 16)
                 }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 16)
+                .scrollIndicators(.hidden)
             }
         }
         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: sent)
-    }
-
-    private var systemInfoSummary: String {
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
-        let osVersion = ProcessInfo.processInfo.operatingSystemVersionString
-        return "v\(version) / macOS \(osVersion)"
     }
 
     private func sendReport() {
@@ -1232,9 +1282,11 @@ struct BugReportPanel: View {
 
         isSending = true
 
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
-        let osVersion = ProcessInfo.processInfo.operatingSystemVersionString
-        let locale = Locale.current.identifier
+        let diagnostics = includeDiagnostics ? DiagnosticCollector.collect() : nil
+        var message = "*Bug Report*\n\n\(text)"
+        if let diag = diagnostics {
+            message += "\n\n```\n\(diag)\n```"
+        }
 
         let payload: [String: Any] = [
             "text": "Bug Report — AI Usage Meter",
@@ -1243,7 +1295,7 @@ struct BugReportPanel: View {
                     "type": "section",
                     "text": [
                         "type": "mrkdwn",
-                        "text": "*Bug Report*\n\n\(text)\n\n_v\(version) · macOS \(osVersion) · \(locale)_"
+                        "text": message
                     ]
                 ]
             ]
@@ -1271,6 +1323,90 @@ struct BugReportPanel: View {
                 }
             }
         }.resume()
+    }
+}
+
+enum DiagnosticCollector {
+    static func collect() -> String {
+        var lines: [String] = []
+
+        // App
+        let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+        lines.append("App: v\(appVersion)")
+
+        // macOS
+        let os = ProcessInfo.processInfo.operatingSystemVersion
+        lines.append("macOS: \(os.majorVersion).\(os.minorVersion).\(os.patchVersion)")
+
+        // Locale
+        lines.append("Locale: \(Locale.current.identifier)")
+
+        // Claude Code version
+        let claudeVersion = shellOutput("claude --version") ?? "not found"
+        lines.append("Claude Code: \(claudeVersion)")
+
+        // Keychain credentials
+        let creds = KeychainManager.shared.getClaudeCodeCredentials(allowInteraction: false)
+        if let creds {
+            lines.append("Token: \(creds.isExpired ? "expired" : "valid")")
+            if let tier = creds.rateLimitTier {
+                lines.append("Tier: \(tier)")
+            }
+            if let scopes = creds.scopes {
+                lines.append("Scopes: \(scopes.joined(separator: ", "))")
+            }
+        } else {
+            lines.append("Token: not found")
+        }
+
+        // Credential file paths
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let credPaths = [
+            "\(home)/.claude/.credentials.json",
+            "\(home)/.config/claude/.credentials.json",
+            "\(home)/.config/claude-code/.credentials.json"
+        ]
+        let existingFiles = credPaths.filter { FileManager.default.fileExists(atPath: $0) }
+        lines.append("Cred files: \(existingFiles.isEmpty ? "none" : existingFiles.map { ($0 as NSString).lastPathComponent }.joined(separator: ", "))")
+
+        // Keychain entries count
+        let entryCount = countKeychainEntries()
+        lines.append("Keychain entries: \(entryCount)")
+
+        return lines.joined(separator: "\n")
+    }
+
+    private static func shellOutput(_ command: String) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", command]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        do { try process.run() } catch { return nil }
+        let deadline = DispatchTime.now() + 3
+        DispatchQueue.global().asyncAfter(deadline: deadline) {
+            if process.isRunning { process.terminate() }
+        }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return nil }
+        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func countKeychainEntries() -> Int {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "Claude Code-credentials",
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitAll
+        ]
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecSuccess, let items = result as? [[String: Any]] {
+            return items.count
+        }
+        return 0
     }
 }
 
