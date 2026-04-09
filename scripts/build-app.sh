@@ -11,6 +11,9 @@ TEAM_ID="${TEAM_ID:-8V3Z27Z6RY}"
 APPLE_ID="${APPLE_ID:-}"
 APPLE_APP_SPECIFIC_PASSWORD="${APPLE_APP_SPECIFIC_PASSWORD:-}"
 NOTARIZE="${NOTARIZE:-}"
+RESEND_API_KEY="${RESEND_API_KEY:-}"
+FEEDBACK_EMAIL="${FEEDBACK_EMAIL:-}"
+DONATION_URL="${DONATION_URL:-}"
 
 echo "🔨 Building AI Usage Meter v$VERSION..."
 
@@ -76,6 +79,12 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << EOF
     <string>https://github.com/multi-turn-inc/ai-usage-meter/releases/latest/download/appcast.xml</string>
     <key>SUPublicEDKey</key>
     <string>OFZWN3IMKCwZ7nWqf8hreBnNLdPLe0LxleGaTFbXFmo=</string>
+    <key>ResendAPIKey</key>
+    <string>$RESEND_API_KEY</string>
+    <key>FeedbackEmail</key>
+    <string>$FEEDBACK_EMAIL</string>
+    <key>DonationURL</key>
+    <string>$DONATION_URL</string>
 </dict>
 </plist>
 EOF

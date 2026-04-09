@@ -1283,25 +1283,19 @@ struct BugReportPanel: View {
         isSending = true
 
         let diagnostics = includeDiagnostics ? DiagnosticCollector.collect() : nil
-        var message = "*Bug Report*\n\n\(text)"
+        var htmlBody = "<h3>Bug Report</h3><p>\(text.replacingOccurrences(of: "\n", with: "<br>"))</p>"
         if let diag = diagnostics {
-            message += "\n\n```\n\(diag)\n```"
+            htmlBody += "<h4>Diagnostics</h4><pre>\(diag)</pre>"
         }
 
         let payload: [String: Any] = [
-            "text": "Bug Report — AI Usage Meter",
-            "blocks": [
-                [
-                    "type": "section",
-                    "text": [
-                        "type": "mrkdwn",
-                        "text": message
-                    ]
-                ]
-            ]
+            "from": "AI Usage Meter <onboarding@resend.dev>",
+            "to": [FeedbackConfig.feedbackEmail],
+            "subject": "Bug Report — AI Usage Meter",
+            "html": htmlBody
         ]
 
-        guard let url = URL(string: FeedbackConfig.slackWebhookURL),
+        guard let url = URL(string: "https://api.resend.com/emails"),
               let body = try? JSONSerialization.data(withJSONObject: payload) else {
             isSending = false
             return
@@ -1310,6 +1304,7 @@ struct BugReportPanel: View {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(FeedbackConfig.resendAPIKey)", forHTTPHeaderField: "Authorization")
         request.httpBody = body
 
         URLSession.shared.dataTask(with: request) { _, response, _ in
@@ -1411,10 +1406,15 @@ enum DiagnosticCollector {
 }
 
 enum FeedbackConfig {
-    // TODO: Replace with actual Slack webhook URL before release
-    static let slackWebhookURL = "https://hooks.slack.com/services/REPLACE_ME"
-    // TODO: Replace with actual donation URL before release
-    static let donationURL = "https://buymeacoffee.com/REPLACE_ME"
+    static var resendAPIKey: String {
+        Bundle.main.object(forInfoDictionaryKey: "ResendAPIKey") as? String ?? ""
+    }
+    static var feedbackEmail: String {
+        Bundle.main.object(forInfoDictionaryKey: "FeedbackEmail") as? String ?? ""
+    }
+    static var donationURL: String {
+        Bundle.main.object(forInfoDictionaryKey: "DonationURL") as? String ?? ""
+    }
 }
 
 struct ServiceToggle: View {
