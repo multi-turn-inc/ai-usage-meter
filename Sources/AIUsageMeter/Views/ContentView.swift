@@ -402,7 +402,20 @@ struct SettingsPanel: View {
                             .pickerStyle(.segmented)
                         }
 
-
+                        HStack {
+                            Text(L.activityDetection)
+                                .font(.subheadline)
+                            Spacer()
+                            Toggle("", isOn: Binding(
+                                get: { appState.activityDetectionEnabled },
+                                set: { appState.setActivityDetection($0) }
+                            ))
+                            .toggleStyle(.switch)
+                            .tint(.blue)
+                            .labelsHidden()
+                            .scaleEffect(0.75)
+                            .frame(width: 38, height: 22)
+                        }
 
                     }
                     .padding(.horizontal, 16)

@@ -297,6 +297,21 @@ class LocalizationManager {
         }
     }
 
+    var activityDetection: String {
+        switch currentLanguage {
+        case .english: return "Activity detection"
+        case .korean: return "사용 감지"
+        case .japanese: return "アクティビティ検出"
+        case .chinese: return "活动检测"
+        case .spanish: return "Detección de actividad"
+        case .french: return "Détection d'activité"
+        case .german: return "Aktivitätserkennung"
+        case .portuguese: return "Detecção de atividade"
+        case .russian: return "Обнаружение активности"
+        case .italian: return "Rilevamento attività"
+        }
+    }
+
     var enabled: String {
         switch currentLanguage {
         case .english: return "Enabled"

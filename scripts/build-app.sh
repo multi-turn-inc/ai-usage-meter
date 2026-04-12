@@ -100,17 +100,66 @@ echo "✅ App signed successfully"
 
 DMG_NAME="AIUsageMeter-$VERSION.dmg"
 DMG_PATH="$BUILD_DIR/$DMG_NAME"
+DMG_RW="$BUILD_DIR/rw.dmg"
 
-echo "📦 Creating DMG..."
-rm -f "$DMG_PATH"
+echo "📦 Creating DMG with custom layout..."
+rm -f "$DMG_PATH" "$DMG_RW"
 
 DMG_TEMP="$BUILD_DIR/dmg-temp"
 rm -rf "$DMG_TEMP"
-mkdir -p "$DMG_TEMP"
+mkdir -p "$DMG_TEMP/.background"
 cp -R "$APP_BUNDLE" "$DMG_TEMP/"
 ln -s /Applications "$DMG_TEMP/Applications"
 
-hdiutil create -volname "$APP_NAME" -srcfolder "$DMG_TEMP" -ov -format UDZO "$DMG_PATH"
+# Copy background image if present
+if [ -f "scripts/dmg-assets/background.png" ]; then
+    cp "scripts/dmg-assets/background.png" "$DMG_TEMP/.background/background.png"
+fi
+
+# Create writable DMG
+hdiutil create -volname "$APP_NAME" -srcfolder "$DMG_TEMP" -ov -format UDRW -fs HFS+ "$DMG_RW"
+
+# Mount and customize
+MOUNT_DIR="/Volumes/$APP_NAME"
+hdiutil detach "$MOUNT_DIR" 2>/dev/null || true
+hdiutil attach "$DMG_RW" -mountpoint "$MOUNT_DIR" -nobrowse
+sleep 3
+
+# Apply custom view via AppleScript (with extended timeout)
+osascript <<APPLESCRIPT
+with timeout of 120 seconds
+    tell application "Finder"
+        tell disk "$APP_NAME"
+            open
+            delay 2
+            set current view of container window to icon view
+            set toolbar visible of container window to false
+            set statusbar visible of container window to false
+            set the bounds of container window to {400, 100, 940, 480}
+            set theViewOptions to the icon view options of container window
+            set arrangement of theViewOptions to not arranged
+            set icon size of theViewOptions to 110
+            set text size of theViewOptions to 12
+            try
+                set background picture of theViewOptions to file ".background:background.png"
+            end try
+            set position of item "$APP_NAME.app" of container window to {145, 210}
+            set position of item "Applications" of container window to {400, 210}
+            update without registering applications
+            delay 3
+            close
+        end tell
+    end tell
+end timeout
+APPLESCRIPT
+
+sync
+sleep 1
+hdiutil detach "$MOUNT_DIR" 2>/dev/null || hdiutil detach "$MOUNT_DIR" -force
+
+# Convert to compressed read-only
+hdiutil convert "$DMG_RW" -format UDZO -imagekey zlib-level=9 -o "$DMG_PATH"
+rm -f "$DMG_RW"
 rm -rf "$DMG_TEMP"
 
 echo "🔐 Signing DMG..."

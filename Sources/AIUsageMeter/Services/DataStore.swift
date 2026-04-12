@@ -91,6 +91,7 @@ class DataStore {
         var showNotifications: Bool = true
         var notificationThreshold: Double = 80
         var launchAtLogin: Bool = false
+        var activityDetectionEnabled: Bool = false
     }
 
     func saveSettings(_ settings: AppSettings) {

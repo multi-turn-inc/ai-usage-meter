@@ -11,6 +11,7 @@ class AppState {
     var errorMessage: String?
     var showingSettings: Bool = false
     var launchAtLogin: Bool = false
+    var activityDetectionEnabled: Bool = false
     var showMenuBarLegendOnboarding: Bool = false
 
     private var refreshTimer: Timer?
@@ -100,6 +101,20 @@ class AppState {
         processMonitorTimer?.invalidate()
         processMonitorTimer = nil
         ProcessMonitor.shared.stop()
+        // Clear consuming state on all services
+        for service in services {
+            service.isConsuming = false
+        }
+    }
+
+    func setActivityDetection(_ enabled: Bool) {
+        activityDetectionEnabled = enabled
+        if enabled {
+            startProcessMonitor()
+        } else {
+            stopProcessMonitor()
+        }
+        persistAppSettings()
     }
 
     private func syncConsumingState() {
@@ -157,7 +172,9 @@ class AppState {
         guard !didStartRefreshWorkflow else { return }
         didStartRefreshWorkflow = true
 
-        startProcessMonitor()
+        if activityDetectionEnabled {
+            startProcessMonitor()
+        }
         startCredentialFileWatcher()
 
         Task {
@@ -287,6 +304,7 @@ class AppState {
 
         let settings = dataStore.getSettings()
         refreshInterval = settings.refreshInterval
+        activityDetectionEnabled = settings.activityDetectionEnabled
         for index in services.indices {
             services[index].config.refreshInterval = settings.refreshInterval
             services[index].config.notificationThreshold = settings.notificationThreshold
@@ -306,7 +324,8 @@ class AppState {
             refreshInterval: refreshInterval,
             showNotifications: true,
             notificationThreshold: threshold,
-            launchAtLogin: launchAtLogin
+            launchAtLogin: launchAtLogin,
+            activityDetectionEnabled: activityDetectionEnabled
         )
         dataStore.saveSettings(settings)
     }
