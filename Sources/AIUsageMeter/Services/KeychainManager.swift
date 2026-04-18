@@ -102,12 +102,38 @@ class KeychainManager {
             cachedClaudeCredentials = nil
         }
 
+        // 1) Try file-based credentials first (no Keychain prompt)
+        let fileRecords = loadClaudeCodeCredentialRecordsFromFiles()
+        let validFileCredentials = selectBestCredentials(from: fileRecords)
+        if let creds = validFileCredentials, !creds.isExpired {
+            cachedClaudeCredentials = creds
+            return creds
+        }
+
+        // 2) Fall back to Keychain
         var records = getAllClaudeCodeCredentialRecords(includingDiscoveredServices: false, allowInteraction: allowInteraction)
         if records.isEmpty && allowInteraction {
             // Discovery enumerates Keychain items; keep it user-initiated only.
             records = getAllClaudeCodeCredentialRecords(includingDiscoveredServices: true, allowInteraction: allowInteraction)
         }
 
+        let bestCredentials = selectBestCredentials(from: records)
+
+        // Cache the result and sync to file so future reads skip Keychain
+        cachedClaudeCredentials = bestCredentials
+        if let creds = bestCredentials, !creds.isExpired {
+            try? synchronizeClaudeCodeCredentialsToFiles(creds)
+        }
+        return bestCredentials
+    }
+
+    /// Clears the cached credentials (call on account switch)
+    func clearCredentialsCache() {
+        cachedClaudeCredentials = nil
+        cachedDiscoveredServices = nil
+    }
+
+    private func selectBestCredentials(from records: [ClaudeCodeCredentialsRecord]) -> ClaudeCodeCredentials? {
         var bestCredentials: ClaudeCodeCredentials?
         var bestExpiresAt: Int64 = 0
         var bestHasProfileScope = false
@@ -139,15 +165,7 @@ class KeychainManager {
             }
         }
 
-        // Cache the result
-        cachedClaudeCredentials = bestCredentials
         return bestCredentials
-    }
-
-    /// Clears the cached credentials (call on account switch)
-    func clearCredentialsCache() {
-        cachedClaudeCredentials = nil
-        cachedDiscoveredServices = nil
     }
 
     private struct ClaudeCodeCredentialsRecord {
@@ -529,8 +547,19 @@ extension KeychainManager {
     }
 
     private func synchronizeClaudeCodeCredentialsToFiles(_ credentials: ClaudeCodeCredentials) throws {
-        for url in claudeCodeCredentialFileURLs() where fileManager.fileExists(atPath: url.path) {
-            try updateClaudeCodeCredentialsFile(credentials, at: url)
+        let urls = claudeCodeCredentialFileURLs()
+        let existingURLs = urls.filter { fileManager.fileExists(atPath: $0.path) }
+
+        if existingURLs.isEmpty {
+            // No credential file exists yet — create the primary one
+            // so future reads can skip Keychain entirely.
+            if let primaryURL = urls.first {
+                try updateClaudeCodeCredentialsFile(credentials, at: primaryURL)
+            }
+        } else {
+            for url in existingURLs {
+                try updateClaudeCodeCredentialsFile(credentials, at: url)
+            }
         }
     }
 
