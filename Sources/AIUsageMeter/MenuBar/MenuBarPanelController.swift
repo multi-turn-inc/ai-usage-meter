@@ -12,6 +12,7 @@ final class MenuBarPanelController: NSObject, NSWindowDelegate {
     private var globalEventMonitor: EventMonitor?
     private var appearanceObservation: NSKeyValueObservation?
     private var consumingAnimationTimer: Timer?
+    private var lastIconSnapshot: IconSnapshot?
 
     init(title: String, appState: AppState, themeManager: ThemeManager) {
         self.appState = appState
@@ -78,6 +79,8 @@ final class MenuBarPanelController: NSObject, NSWindowDelegate {
 
     private func startIconObservationLoop() {
         withObservationTracking {
+            // Touch all properties that affect the icon so Observation knows
+            // what to watch. The actual diff is done via IconSnapshot below.
             _ = appState.isRefreshing
             _ = appState.lastRefreshDate
             _ = themeManager.current.menuBar
@@ -90,22 +93,40 @@ final class MenuBarPanelController: NSObject, NSWindowDelegate {
             }
         } onChange: { [weak self] in
             Task { @MainActor in
-                self?.updateStatusItemImage()
-                self?.syncConsumingAnimationTimer()
-                self?.startIconObservationLoop()
+                self?.onObservedStateChanged()
             }
         }
+    }
+
+    /// Called once per observation change batch. Diffs against the last
+    /// snapshot to avoid redundant icon renders.
+    private func onObservedStateChanged() {
+        let newSnapshot = IconSnapshot(appState: appState)
+        let changed = newSnapshot != lastIconSnapshot
+        let consumingChanged = newSnapshot.anyConsuming != (lastIconSnapshot?.anyConsuming ?? false)
+
+        lastIconSnapshot = newSnapshot
+
+        if changed {
+            updateStatusItemImage()
+        }
+        if consumingChanged {
+            syncConsumingAnimationTimer()
+        }
+
+        startIconObservationLoop()
     }
 
     private func syncConsumingAnimationTimer() {
         let anyConsuming = appState.services.contains { $0.isConsuming }
         if anyConsuming && consumingAnimationTimer == nil {
-            let timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 12, repeats: true) { [weak self] _ in
+            // 4 fps is enough for a smooth heartbeat while being 3x cheaper than 12 fps
+            let timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 4, repeats: true) { [weak self] _ in
                 Task { @MainActor in
                     self?.updateStatusItemImage()
                 }
             }
-            timer.tolerance = 0.03
+            timer.tolerance = 0.08
             consumingAnimationTimer = timer
         } else if !anyConsuming && consumingAnimationTimer != nil {
             consumingAnimationTimer?.invalidate()
@@ -241,6 +262,34 @@ final class MenuBarPanelController: NSObject, NSWindowDelegate {
 
         try data.write(to: url, options: .atomic)
         print("📸 Snapshot written: \(url.path)")
+    }
+}
+
+/// Lightweight value snapshot of state that affects the menu bar icon.
+/// Used to skip redundant renders when observation fires but nothing changed.
+private struct IconSnapshot: Equatable {
+    struct Service: Equatable {
+        let isEnabled: Bool
+        let usagePercentage: Double
+        let fiveHourUsage: Double?
+        let sevenDayUsage: Double?
+        let isConsuming: Bool
+    }
+
+    let services: [Service]
+    let anyConsuming: Bool
+
+    init(appState: AppState) {
+        self.services = appState.services.map {
+            Service(
+                isEnabled: $0.config.isEnabled,
+                usagePercentage: $0.usagePercentage,
+                fiveHourUsage: $0.fiveHourUsage,
+                sevenDayUsage: $0.sevenDayUsage,
+                isConsuming: $0.isConsuming
+            )
+        }
+        self.anyConsuming = services.contains { $0.isConsuming }
     }
 }
 
