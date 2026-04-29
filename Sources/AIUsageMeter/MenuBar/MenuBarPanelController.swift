@@ -120,13 +120,12 @@ final class MenuBarPanelController: NSObject, NSWindowDelegate {
     private func syncConsumingAnimationTimer() {
         let anyConsuming = appState.services.contains { $0.isConsuming }
         if anyConsuming && consumingAnimationTimer == nil {
-            // 4 fps is enough for a smooth heartbeat while being 3x cheaper than 12 fps
-            let timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 4, repeats: true) { [weak self] _ in
+            let timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 12, repeats: true) { [weak self] _ in
                 Task { @MainActor in
                     self?.updateStatusItemImage()
                 }
             }
-            timer.tolerance = 0.08
+            timer.tolerance = 0.03
             consumingAnimationTimer = timer
         } else if !anyConsuming && consumingAnimationTimer != nil {
             consumingAnimationTimer?.invalidate()

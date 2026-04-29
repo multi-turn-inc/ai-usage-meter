@@ -31,7 +31,9 @@ final class ProcessMonitor {
         stop()
         lastProcessCounters.removeAll()
         lastActiveAt.removeAll()
-        resolveAllHosts()
+        pollQueue.async { [weak self] in
+            self?.resolveAllHosts()
+        }
         pollAsync()
         timer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
             self?.pollAsync()
@@ -55,35 +57,31 @@ final class ProcessMonitor {
     private func pollAsync() {
         pollQueue.async { [weak self] in
             guard let self else { return }
+            // All subprocess + counter work stays on pollQueue (thread-safe)
             let processDeltas = self.sampleProcessDeltas()
-            let newActive = self.getActiveServicesFromConnections(processDeltas: processDeltas)
+            let detected = self.getActiveServicesFromConnections(processDeltas: processDeltas)
 
+            // Only the lightweight state update hops to main
             DispatchQueue.main.async {
-                self.applyPollResult(newActive)
+                var newActive = detected
+                let now = Date()
+                for service in newActive {
+                    self.lastActiveAt[service] = now
+                }
+                for service in ServiceType.allCases where !newActive.contains(service) {
+                    if let lastSeen = self.lastActiveAt[service],
+                       now.timeIntervalSince(lastSeen) < self.activityGraceInterval {
+                        newActive.insert(service)
+                    }
+                }
+                if newActive != self.activeServices {
+                    self.activeServices = newActive
+                }
+                self.pollCount += 1
+                if self.pollCount % 60 == 0 {
+                    self.pollQueue.async { self.resolveAllHosts() }
+                }
             }
-        }
-    }
-
-    private func applyPollResult(_ detected: Set<ServiceType>) {
-        var newActive = detected
-        let now = Date()
-        for service in newActive {
-            lastActiveAt[service] = now
-        }
-
-        for service in ServiceType.allCases where !newActive.contains(service) {
-            if let lastSeen = lastActiveAt[service], now.timeIntervalSince(lastSeen) < activityGraceInterval {
-                newActive.insert(service)
-            }
-        }
-
-        if newActive != activeServices {
-            activeServices = newActive
-        }
-
-        pollCount += 1
-        if pollCount % 60 == 0 {
-            resolveAllHosts()
         }
     }
 

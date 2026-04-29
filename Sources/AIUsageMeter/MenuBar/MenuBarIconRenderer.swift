@@ -136,6 +136,10 @@ enum MenuBarIconRenderer {
 
         let frameRect = NSRect(x: x + 1, y: barY - 1, width: barAreaWidth + 2, height: maxBarHeight + 2)
         let framePath = NSBezierPath(roundedRect: frameRect, xRadius: 2, yRadius: 2)
+
+        NSColor.black.withAlphaComponent(0.28).setFill()
+        framePath.fill()
+
         activeBorderColor.setStroke()
         framePath.lineWidth = 0.75
         framePath.stroke()

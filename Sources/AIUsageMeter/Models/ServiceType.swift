@@ -27,7 +27,7 @@ enum ServiceType: String, Codable, CaseIterable, Identifiable {
     var brandColorHex: String {
         switch self {
         case .claude: return "#D97706"
-        case .codex: return "#10A37F"
+        case .codex: return "#6B7CF6"
         case .gemini: return "#4285F4"
         }
     }

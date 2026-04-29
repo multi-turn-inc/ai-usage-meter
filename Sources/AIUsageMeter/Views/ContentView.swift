@@ -29,7 +29,7 @@ struct ContentView: View {
                 }
                 .animation(.spring(response: 0.4, dampingFraction: 0.85), value: showSettings)
             }
-            .compositingGroup()
+            .conditionalCompositingGroup(showOnboarding)
             .blur(radius: showOnboarding ? 10 : 0)
             .scaleEffect(showOnboarding ? 0.98 : 1.0)
             .saturation(showOnboarding ? 0.85 : 1.0)
@@ -124,6 +124,19 @@ struct SpinningRefreshButton: View {
     }
 }
 
+extension View {
+    /// Apply `.compositingGroup()` only when needed (e.g. blur overlay active).
+    /// Avoids the expensive offscreen render pass during normal interaction.
+    @ViewBuilder
+    func conditionalCompositingGroup(_ active: Bool) -> some View {
+        if active {
+            self.compositingGroup()
+        } else {
+            self
+        }
+    }
+}
+
 struct StaggerAppear: ViewModifier {
     let appeared: Bool
     let delay: Double
@@ -164,8 +177,17 @@ struct MainPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text(L.aiUsage)
-                    .font(.system(size: 16, weight: .bold))
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text("Token Burn")
+                        .font(.system(size: 16, weight: .bold))
+
+                    if appState.tokenUsage.todayTokens > 0 {
+                        Text("· \(formatTokens(appState.tokenUsage.todayTokens)) today")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .contentTransition(.numericText())
+                    }
+                }
 
                 Spacer()
 
@@ -215,7 +237,11 @@ struct MainPanel: View {
 
                 VStack(spacing: 10) {
                     ForEach(Array(enabledServices.enumerated()), id: \.element.id) { index, service in
-                        DetailCard(service: service, onRefresh: { Task { await appState.refresh(interactive: true) } })
+                        DetailCard(
+                            service: service,
+                            todayTokens: appState.tokenUsage.todayTokens(for: service.config.serviceType),
+                            onRefresh: { Task { await appState.refresh(interactive: true) } }
+                        )
                             .opacity(appeared ? 1 : 0)
                             .offset(y: appeared ? 0 : 16)
                             .animation(
@@ -226,16 +252,13 @@ struct MainPanel: View {
                     }
                 }
 
-                if !enabledServices.isEmpty {
-                    CombinedUsageHistoryView(serviceTypes: enabledServices.map { $0.config.serviceType })
-                        .frame(height: 120)
-                        .opacity(appeared ? 1 : 0)
-                        .offset(y: appeared ? 0 : 16)
-                        .animation(
-                            .spring(response: 0.5, dampingFraction: 0.75).delay(0.3),
-                            value: appeared
-                        )
-                }
+                TokenUsageView(summary: appState.tokenUsage)
+                    .opacity(appeared ? 1 : 0)
+                    .offset(y: appeared ? 0 : 16)
+                    .animation(
+                        .spring(response: 0.5, dampingFraction: 0.75).delay(0.3),
+                        value: appeared
+                    )
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 10)
@@ -276,7 +299,6 @@ struct MainPanel: View {
         .onAppear {
             withAnimation { appeared = true }
         }
-        .onDisappear { appeared = false }
     }
 
     private var enabledServices: [ServiceViewModel] {
@@ -327,6 +349,7 @@ struct SettingsPanel: View {
 
     private var settingsContent: some View {
         VStack(spacing: 0) {
+            // Header
             HStack(spacing: 10) {
                 Button {
                     showSettings = false
@@ -348,128 +371,182 @@ struct SettingsPanel: View {
             .padding(.vertical, 12)
 
             ScrollView {
-                VStack(spacing: 16) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text(L.services)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(.tertiary)
-                            .textCase(.uppercase)
-                            .tracking(0.5)
-
-                        ServiceToggle(name: "Claude", color: ServiceType.claude.brandColor, isOn: claudeEnabledBinding)
-                            .modifier(StaggerAppear(appeared: appeared, delay: 0.0))
-                        ServiceToggle(name: "Codex", color: ServiceType.codex.brandColor, isOn: codexEnabledBinding)
-                            .modifier(StaggerAppear(appeared: appeared, delay: 0.04))
-                        ServiceToggle(name: "Gemini", color: ServiceType.gemini.brandColor, isOn: geminiEnabledBinding)
-                            .modifier(StaggerAppear(appeared: appeared, delay: 0.08))
-                    }
-                    .padding(.horizontal, 16)
-
-                    Divider().opacity(0.3).padding(.horizontal, 16)
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text(L.general)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(.tertiary)
-                            .textCase(.uppercase)
-                            .tracking(0.5)
-
-                        HStack {
-                            Text(L.launchAtLogin)
-                                .font(.subheadline)
-                            Spacer()
-                            Toggle("", isOn: Binding(
-                                get: { appState.launchAtLogin },
-                                set: { appState.setLaunchAtLogin($0) }
-                            ))
-                            .toggleStyle(.switch)
-                            .tint(.blue)
-                            .labelsHidden()
-                            .scaleEffect(0.75)
-                            .frame(width: 38, height: 22)
+                VStack(spacing: 14) {
+                    // MARK: - Services
+                    settingsSection(title: L.services, delay: 0.0) {
+                        VStack(spacing: 0) {
+                            settingsServiceRow(
+                                icon: "brain.head.profile",
+                                iconColor: ServiceType.claude.brandColor,
+                                name: "Claude",
+                                isOn: claudeEnabledBinding,
+                                tintColor: ServiceType.claude.brandColor
+                            )
+                            Divider().opacity(0.2).padding(.leading, 52)
+                            settingsServiceRow(
+                                icon: "terminal",
+                                iconColor: ServiceType.codex.brandColor,
+                                name: "Codex",
+                                isOn: codexEnabledBinding,
+                                tintColor: ServiceType.codex.brandColor
+                            )
                         }
+                        .padding(4)
+                        .premiumCard()
+                    }
 
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(L.refreshInterval)
-                                .font(.subheadline)
-
-                            Picker("", selection: refreshIntervalBinding) {
-                                Text("1m").tag(TimeInterval(60))
-                                Text("5m").tag(TimeInterval(300))
-                                Text("15m").tag(TimeInterval(900))
-                                Text("30m").tag(TimeInterval(1800))
+                    // MARK: - General
+                    settingsSection(title: L.general, delay: 0.06) {
+                        VStack(spacing: 0) {
+                            settingsRow(icon: "lock.open", iconColor: .secondary) {
+                                Text(L.launchAtLogin)
+                                    .font(.system(size: 13, weight: .medium))
+                                Spacer()
+                                Toggle("", isOn: Binding(
+                                    get: { appState.launchAtLogin },
+                                    set: { appState.setLaunchAtLogin($0) }
+                                ))
+                                .toggleStyle(.switch)
+                                .tint(ServiceType.codex.brandColor)
+                                .labelsHidden()
+                                .scaleEffect(0.7)
+                                .frame(width: 38, height: 22)
                             }
-                            .pickerStyle(.segmented)
-                        }
 
-                        HStack {
-                            Text(L.activityDetection)
-                                .font(.subheadline)
-                            Spacer()
-                            Toggle("", isOn: Binding(
-                                get: { appState.activityDetectionEnabled },
-                                set: { appState.setActivityDetection($0) }
-                            ))
-                            .toggleStyle(.switch)
-                            .tint(.blue)
-                            .labelsHidden()
-                            .scaleEffect(0.75)
-                            .frame(width: 38, height: 22)
-                        }
+                            Divider().opacity(0.2).padding(.leading, 52)
 
-                    }
-                    .padding(.horizontal, 16)
-                    .modifier(StaggerAppear(appeared: appeared, delay: 0.1))
-
-                    Divider().opacity(0.3).padding(.horizontal, 16)
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text(L.language)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(.tertiary)
-                            .textCase(.uppercase)
-                            .tracking(0.5)
-
-                        Menu {
-                            ForEach(Language.allCases, id: \.self) { lang in
-                                Button {
-                                    L.currentLanguage = lang
-                                } label: {
-                                    if L.currentLanguage == lang {
-                                        Label(lang.displayName, systemImage: "checkmark")
-                                    } else {
-                                        Text(lang.displayName)
+                            settingsRow(icon: "clock", iconColor: .secondary) {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text(L.refreshInterval)
+                                        .font(.system(size: 13, weight: .medium))
+                                    Picker("", selection: refreshIntervalBinding) {
+                                        Text("1m").tag(TimeInterval(60))
+                                        Text("5m").tag(TimeInterval(300))
+                                        Text("15m").tag(TimeInterval(900))
+                                        Text("30m").tag(TimeInterval(1800))
                                     }
+                                    .pickerStyle(.segmented)
                                 }
                             }
-                        } label: {
-                            HStack {
-                                Text(L.currentLanguage.displayName)
+
+                            Divider().opacity(0.2).padding(.leading, 52)
+
+                            settingsRow(icon: "eye", iconColor: .secondary) {
+                                Text(L.activityDetection)
+                                    .font(.system(size: 13, weight: .medium))
                                 Spacer()
-                                Image(systemName: "chevron.up.chevron.down")
-                                    .font(.system(size: 11, weight: .semibold))
-                                    .foregroundStyle(.secondary)
+                                Toggle("", isOn: Binding(
+                                    get: { appState.activityDetectionEnabled },
+                                    set: { appState.setActivityDetection($0) }
+                                ))
+                                .toggleStyle(.switch)
+                                .tint(ServiceType.codex.brandColor)
+                                .labelsHidden()
+                                .scaleEffect(0.7)
+                                .frame(width: 38, height: 22)
                             }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 9)
+
+                            Divider().opacity(0.2).padding(.leading, 52)
+
+                            settingsRow(icon: "globe", iconColor: .secondary) {
+                                Text(L.language)
+                                    .font(.system(size: 13, weight: .medium))
+                                Spacer()
+                                Menu {
+                                    ForEach(Language.allCases, id: \.self) { lang in
+                                        Button {
+                                            L.currentLanguage = lang
+                                        } label: {
+                                            if L.currentLanguage == lang {
+                                                Label(lang.displayName, systemImage: "checkmark")
+                                            } else {
+                                                Text(lang.displayName)
+                                            }
+                                        }
+                                    }
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Text(L.currentLanguage.displayName)
+                                            .font(.system(size: 12))
+                                        Image(systemName: "chevron.down")
+                                            .font(.system(size: 9, weight: .semibold))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 5)
+                                }
+                                .buttonStyle(.glass)
+                                .buttonBorderShape(.roundedRectangle(radius: 8))
+                            }
                         }
-                        .buttonStyle(.glass)
-                        .buttonBorderShape(.roundedRectangle(radius: 10))
+                        .padding(4)
+                        .premiumCard()
                     }
-                    .padding(.horizontal, 16)
-                    .modifier(StaggerAppear(appeared: appeared, delay: 0.15))
 
-                    Divider().opacity(0.3).padding(.horizontal, 16)
+                    // MARK: - Update
+                    settingsSection(title: L.update, delay: 0.12) {
+                        HStack {
+                            settingsIcon(systemName: "arrow.triangle.2.circlepath", color: .secondary)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Version")
+                                    .font(.system(size: 13, weight: .medium))
+                                Text("v\(currentVersion)")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            Spacer()
+                            Button {
+                                Updater.shared.checkForUpdates()
+                            } label: {
+                                Text(L.checkUpdate)
+                                    .font(.system(size: 12, weight: .medium))
+                            }
+                            .buttonStyle(.glass)
+                            .buttonBorderShape(.capsule)
+                        }
+                        .padding(10)
+                        .premiumCard()
+                    }
 
-                    UpdateSection()
-                        .modifier(StaggerAppear(appeared: appeared, delay: 0.2))
+                    // MARK: - Support
+                    settingsSection(title: L.support, delay: 0.18) {
+                        VStack(spacing: 0) {
+                            Button { showBugReport = true } label: {
+                                settingsRow(icon: "ladybug", iconColor: .secondary) {
+                                    Text(L.bugReport)
+                                        .font(.system(size: 13, weight: .medium))
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 10, weight: .semibold))
+                                        .foregroundStyle(.quaternary)
+                                }
+                            }
+                            .buttonStyle(.plain)
 
-                    Divider().opacity(0.3).padding(.horizontal, 16)
+                            Divider().opacity(0.2).padding(.leading, 52)
 
-                    SupportSection(showBugReport: $showBugReport)
-                        .modifier(StaggerAppear(appeared: appeared, delay: 0.25))
+                            Button {
+                                if let url = URL(string: FeedbackConfig.donationURL) {
+                                    NSWorkspace.shared.open(url)
+                                }
+                            } label: {
+                                settingsRow(icon: "cup.and.heat.waves", iconColor: .secondary) {
+                                    Text("Token Burn 응원하기")
+                                        .font(.system(size: 13, weight: .medium))
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 10, weight: .semibold))
+                                        .foregroundStyle(.quaternary)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(4)
+                        .premiumCard()
+                    }
                 }
-                .padding(.vertical, 12)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
             }
             .scrollIndicators(.hidden)
         }
@@ -478,6 +555,66 @@ struct SettingsPanel: View {
         }
         .onDisappear { appeared = false }
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: showBugReport)
+    }
+
+    // MARK: - Settings Helpers
+
+    private func settingsSection<Content: View>(title: String, delay: Double, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.tertiary)
+                .textCase(.uppercase)
+                .tracking(0.5)
+                .padding(.leading, 4)
+
+            content()
+        }
+        .modifier(StaggerAppear(appeared: appeared, delay: delay))
+    }
+
+    private func settingsServiceRow(icon: String, iconColor: Color, name: String, isOn: Binding<Bool>, tintColor: Color) -> some View {
+        HStack(spacing: 10) {
+            settingsIcon(systemName: icon, color: iconColor)
+
+            Text(name)
+                .font(.system(size: 13, weight: .semibold))
+
+            Spacer()
+
+            Toggle("", isOn: isOn)
+                .toggleStyle(.switch)
+                .tint(tintColor)
+                .labelsHidden()
+                .scaleEffect(0.7)
+                .frame(width: 38, height: 22)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 8)
+    }
+
+    private func settingsRow<Content: View>(icon: String, iconColor: Color, @ViewBuilder content: () -> Content) -> some View {
+        HStack(spacing: 10) {
+            settingsIcon(systemName: icon, color: iconColor)
+            content()
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+    }
+
+    private func settingsIcon(systemName: String, color: Color) -> some View {
+        Image(systemName: systemName)
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(color)
+            .frame(width: 28, height: 28)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(color.opacity(0.1))
+            )
+    }
+
+    private var currentVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0"
     }
 
     private var claudeEnabledBinding: Binding<Bool> {
@@ -658,6 +795,7 @@ struct CircularGaugeView: View {
 
 struct DetailCard: View {
     let service: ServiceViewModel
+    var todayTokens: Int64 = 0
     var onRefresh: (() -> Void)?
 
     var body: some View {
@@ -712,6 +850,15 @@ struct DetailCard: View {
                     }
                 }
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
+
+                if todayTokens > 0 {
+                    HStack {
+                        Text("오늘 \(formatTokens(todayTokens)) tokens")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
+                        Spacer()
+                    }
+                }
             }
         }
         .padding(12)

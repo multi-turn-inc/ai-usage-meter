@@ -13,6 +13,7 @@ class AppState {
     var launchAtLogin: Bool = false
     var activityDetectionEnabled: Bool = false
     var showMenuBarLegendOnboarding: Bool = false
+    var tokenUsage: TokenUsageSummary = .empty
 
     private var refreshTimer: Timer?
     private var refreshInterval: TimeInterval = 300
@@ -415,6 +416,23 @@ class AppState {
             }
             lastRefreshDate = Date()
             errorMessage = errors.isEmpty ? nil : errors.joined(separator: "; ")
+
+            // Parse token logs from Claude Code + Codex (background thread)
+            Task.detached(priority: .utility) { [weak self] in
+                let claude = ClaudeCodeTokenParser.shared.parse(days: 7)
+                // Start with Claude data, then merge Codex into it
+                var dailyBuckets = Dictionary(uniqueKeysWithValues: claude.daily.map { ($0.date, $0) })
+                var hourlyBuckets = Dictionary(uniqueKeysWithValues: claude.hourly.map { ($0.hourKey, $0) })
+                CodexTokenParser.shared.merge(into: &dailyBuckets, hourly: &hourlyBuckets, days: 7)
+
+                let summary = TokenUsageSummary(
+                    daily: dailyBuckets.values.sorted { $0.date < $1.date },
+                    hourly: hourlyBuckets.values.sorted { $0.hourKey < $1.hourKey },
+                    lastParsed: Date()
+                )
+                await MainActor.run { self?.tokenUsage = summary }
+            }
+
             print("🏁 Refresh complete. Errors: \(errorMessage ?? "none")")
         }
     }
