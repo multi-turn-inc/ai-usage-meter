@@ -25,14 +25,16 @@ final class ProcessMonitor {
 
     private init() {}
 
+    private let pollQueue = DispatchQueue(label: "com.aiusagemeter.processmonitor", qos: .utility)
+
     func start() {
         stop()
         lastProcessCounters.removeAll()
         lastActiveAt.removeAll()
         resolveAllHosts()
-        poll()
+        pollAsync()
         timer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
-            self?.poll()
+            self?.pollAsync()
         }
     }
 
@@ -48,10 +50,22 @@ final class ProcessMonitor {
         activeServices.contains(serviceType)
     }
 
-    private func poll() {
-        let processDeltas = sampleProcessDeltas()
-        var newActive = getActiveServicesFromConnections(processDeltas: processDeltas)
+    /// Runs the heavy subprocess work (nettop, lsof) off the main thread,
+    /// then hops back to update shared state.
+    private func pollAsync() {
+        pollQueue.async { [weak self] in
+            guard let self else { return }
+            let processDeltas = self.sampleProcessDeltas()
+            let newActive = self.getActiveServicesFromConnections(processDeltas: processDeltas)
 
+            DispatchQueue.main.async {
+                self.applyPollResult(newActive)
+            }
+        }
+    }
+
+    private func applyPollResult(_ detected: Set<ServiceType>) {
+        var newActive = detected
         let now = Date()
         for service in newActive {
             lastActiveAt[service] = now
