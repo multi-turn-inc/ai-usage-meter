@@ -113,18 +113,74 @@ class KeychainManager {
         // 2) Fall back to Keychain
         var records = getAllClaudeCodeCredentialRecords(includingDiscoveredServices: false, allowInteraction: allowInteraction)
         if records.isEmpty && allowInteraction {
-            // Discovery enumerates Keychain items; keep it user-initiated only.
             records = getAllClaudeCodeCredentialRecords(includingDiscoveredServices: true, allowInteraction: allowInteraction)
         }
 
         let bestCredentials = selectBestCredentials(from: records)
 
-        // Cache the result and sync to file so future reads skip Keychain
+        // Cache + restore credential file so future reads skip Keychain
         cachedClaudeCredentials = bestCredentials
         if let creds = bestCredentials, !creds.isExpired {
             try? synchronizeClaudeCodeCredentialsToFiles(creds)
+            print("🔑 Credentials synced to file from Keychain")
+        } else if bestCredentials == nil {
+            print("⚠️ No credentials found (keychain allowInteraction=\(allowInteraction))")
         }
         return bestCredentials
+    }
+
+    /// Returns true if any credential file exists on disk.
+    func hasCredentialFile() -> Bool {
+        claudeCodeCredentialFileURLs().contains { fileManager.fileExists(atPath: $0.path) }
+    }
+
+    /// If no credential file exists, restore from Keychain using the
+    /// `security` CLI (which has its own Keychain access and avoids
+    /// app-specific ACL issues with SecItemCopyMatching).
+    func ensureCredentialFileExists() {
+        let urls = claudeCodeCredentialFileURLs()
+        let hasFile = urls.contains { fileManager.fileExists(atPath: $0.path) }
+        if hasFile { return }
+
+        // First try via SecItem API
+        let records = getAllClaudeCodeCredentialRecords(includingDiscoveredServices: true, allowInteraction: true)
+        if let creds = selectBestCredentials(from: records), !creds.isExpired {
+            try? synchronizeClaudeCodeCredentialsToFiles(creds)
+            cachedClaudeCredentials = creds
+            print("🔑 Credential file restored from Keychain (API)")
+            return
+        }
+
+        // Fallback: use `security` CLI which has broader Keychain access
+        let pipe = Pipe()
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        process.arguments = ["find-generic-password", "-s", "Claude Code-credentials", "-w"]
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else { return }
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            guard !data.isEmpty,
+                  let creds = parseCredentials(from: data) else { return }
+
+            if let primaryURL = urls.first {
+                let parent = primaryURL.deletingLastPathComponent()
+                if !fileManager.fileExists(atPath: parent.path) {
+                    try fileManager.createDirectory(at: parent, withIntermediateDirectories: true)
+                }
+                try data.write(to: primaryURL, options: .atomic)
+                // Restrict permissions
+                try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: primaryURL.path)
+                cachedClaudeCredentials = creds
+                print("🔑 Credential file restored from Keychain (CLI)")
+            }
+        } catch {
+            print("⚠️ Failed to restore credentials from Keychain CLI: \(error)")
+        }
     }
 
     /// Clears the cached credentials (call on account switch)

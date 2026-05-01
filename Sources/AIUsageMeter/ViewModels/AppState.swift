@@ -52,9 +52,12 @@ class AppState {
         loadLaunchAtLoginState()
         showMenuBarLegendOnboarding = !AppDefaults.userDefaults.bool(forKey: OnboardingDefaults.didDismissMenuBarLegend)
 
-        // Avoid launching into a Keychain permission prompt while onboarding is visible.
+        // If credential file is missing, the first refresh must be interactive
+        // so Keychain access can restore it. Otherwise use non-interactive.
+        let needsInteractive = !KeychainManager.shared.hasCredentialFile()
+
         if !showMenuBarLegendOnboarding {
-            startRefreshWorkflowIfNeeded()
+            startRefreshWorkflowIfNeeded(interactive: needsInteractive)
         }
     }
 
@@ -169,7 +172,7 @@ class AppState {
         startRefreshWorkflowIfNeeded()
     }
 
-    private func startRefreshWorkflowIfNeeded() {
+    private func startRefreshWorkflowIfNeeded(interactive: Bool = false) {
         guard !didStartRefreshWorkflow else { return }
         didStartRefreshWorkflow = true
 
@@ -180,7 +183,7 @@ class AppState {
 
         Task {
             try? await Task.sleep(nanoseconds: 500_000_000)
-            await refresh(interactive: false)
+            await refresh(interactive: interactive)
             await MainActor.run {
                 startAutoRefreshTimer()
             }
@@ -267,7 +270,9 @@ class AppState {
             print("🔄 Credential change detected → refreshing...")
             KeychainManager.shared.clearCredentialsCache()
             Task {
-                await self?.refresh(interactive: false)
+                // Use interactive: true so Keychain can restore the credential
+                // file if it was deleted (e.g. by Claude Code token refresh).
+                await self?.refresh(interactive: true)
             }
         }
         credentialRefreshDebounce = work
