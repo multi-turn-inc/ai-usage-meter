@@ -197,6 +197,40 @@ else
 fi
 
 echo "✅ DMG created: $DMG_PATH"
+
+# Local install (binary + Sparkle to ~/Library/Application Support/TokenBurn/)
+INSTALL_DIR="$HOME/Library/Application Support/TokenBurn"
+mkdir -p "$INSTALL_DIR"
+cp "$BUILD_DIR/AIUsageMeter" "$INSTALL_DIR/"
+if [ -d "$BUILD_DIR/Sparkle.framework" ]; then
+    rm -rf "$INSTALL_DIR/Sparkle.framework"
+    cp -R "$BUILD_DIR/Sparkle.framework" "$INSTALL_DIR/"
+fi
+
+# Install LaunchAgent
+PLIST_PATH="$HOME/Library/LaunchAgents/com.tokenburn.agent.plist"
+cat > "$PLIST_PATH" << AGENT_PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tokenburn.agent</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$INSTALL_DIR/AIUsageMeter</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <false/>
+</dict>
+</plist>
+AGENT_PLIST
+
+echo "✅ Installed to: $INSTALL_DIR"
+echo "✅ LaunchAgent: $PLIST_PATH"
+
 echo ""
 echo "📋 Release files:"
 ls -lh "$BUILD_DIR"/*.dmg 2>/dev/null || true

@@ -18,16 +18,22 @@ final class MenuBarPanelController: NSObject, NSWindowDelegate {
         self.appState = appState
         self.themeManager = themeManager
 
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem.isVisible = true
+        // macOS 26: autosaveName must be set in a separate async dispatch
+        DispatchQueue.main.async { [weak statusItem] in
+            statusItem?.autosaveName = "TokenBurnMain"
+        }
+
         let panel = MenuBarPanelWindow(title: title) {
             ContentView(appState: appState)
         }
         self.window = panel
 
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.isVisible = true
-
         super.init()
 
+        // Set empty image first (not nil), then update with real icon
+        statusItem.button?.image = NSImage()
         statusItem.button?.setAccessibilityTitle(title)
         updateStatusItemImage()
 
@@ -135,7 +141,9 @@ final class MenuBarPanelController: NSObject, NSWindowDelegate {
     }
 
     private func updateStatusItemImage() {
-        statusItem.button?.image = MenuBarIconRenderer.render(appState: appState, themeManager: themeManager, animationDate: Date())
+        let image = MenuBarIconRenderer.render(appState: appState, themeManager: themeManager, animationDate: Date())
+        statusItem.button?.image = image
+        statusItem.button?.title = ""
         statusItem.button?.imagePosition = .imageOnly
     }
 

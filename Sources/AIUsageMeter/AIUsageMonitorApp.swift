@@ -22,20 +22,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let controller = MenuBarPanelController(
-            title: "AI Usage",
+            title: "Token Burn",
             appState: appState,
             themeManager: ThemeManager.shared
         )
         menuBarController = controller
-
-#if DEBUG
-        if let path = ProcessInfo.processInfo.environment["AIM_SNAPSHOT_ONBOARDING_PATH"],
-           !path.isEmpty {
-            Task { @MainActor in
-                await controller.debugSnapshotOnboardingPNG(to: URL(fileURLWithPath: path))
-                NSApp.terminate(nil)
-            }
-        }
-#endif
     }
 }

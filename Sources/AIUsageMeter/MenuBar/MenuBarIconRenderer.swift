@@ -7,7 +7,14 @@ enum MenuBarIconRenderer {
     static func render(appState: AppState, themeManager: ThemeManager, animationDate: Date = Date()) -> NSImage {
         let services = appState.services.filter { $0.config.isEnabled }
         guard !services.isEmpty else {
-            return NSImage(size: NSSize(width: 22, height: 22))
+            // Show a placeholder icon when no services are enabled
+            let img = NSImage(size: NSSize(width: 22, height: 22), flipped: false) { rect in
+                NSColor.secondaryLabelColor.setFill()
+                NSBezierPath(roundedRect: rect.insetBy(dx: 3, dy: 3), xRadius: 3, yRadius: 3).fill()
+                return true
+            }
+            img.isTemplate = true
+            return img
         }
 
         let serviceWidth: CGFloat = 38
