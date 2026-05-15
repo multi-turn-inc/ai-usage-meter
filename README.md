@@ -11,11 +11,16 @@ Claude Code and Codex usage — remaining quota, token consumption, reset timers
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/multi-turn-inc/ai-usage-meter?include_prereleases)](../../releases)
 
+<br>
+<img src="docs/screenshot-panel.png" width="300" alt="Token Burn Panel">
+
 </div>
 
 <br>
 
 ## What It Does
+
+<img src="docs/screenshot-menubar.png" width="200" alt="Menu Bar">
 
 **Menu bar icon** encodes two things at once:
 - Horizontal fill → 5-hour remaining quota
@@ -73,6 +78,12 @@ The app queries each provider's usage API and parses local token logs. Token ref
 - **Credential recovery** — restores credential file from Keychain when deleted
 - **10 languages** — EN, KO, JA, ZH, ES, FR, DE, PT, RU, IT
 - **macOS native** — SwiftUI with Liquid Glass on macOS Tahoe
+
+<details>
+<summary>Settings</summary>
+<br>
+<img src="docs/screenshot-settings.png" width="300" alt="Settings">
+</details>
 
 ## Security
 
