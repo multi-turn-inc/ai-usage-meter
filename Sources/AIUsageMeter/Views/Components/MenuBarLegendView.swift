@@ -20,7 +20,7 @@ struct MenuBarLegendDiagram: View {
         let maxBarHeight: CGFloat = 24
         let filledCount = max(0, min(barCount, Int((Double(barCount) * fiveHourRemaining).rounded())))
         let meterWidth = CGFloat(barCount) * barWidth + CGFloat(barCount - 1) * barSpacing + 6
-        let accent = Color.accentColor
+        let accent = ServiceType.claude.brandColor
         let fiveHourPercent = Int(fiveHourRemaining * 100)
         let sevenDayPercent = Int(sevenDayRemaining * 100)
 
@@ -300,6 +300,12 @@ struct MenuBarLegendContent: View {
                             .modifier(MenuBarLegendAppear(isPresented: isPresented, delay: 0.20))
                     }
                 }
+
+                Text("⚠ Token usage is estimated from local logs and may not be exact.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .modifier(MenuBarLegendAppear(isPresented: isPresented, delay: 0.24))
             }
             .frame(maxWidth: .infinity)
         }

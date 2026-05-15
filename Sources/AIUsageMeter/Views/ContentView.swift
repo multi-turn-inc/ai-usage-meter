@@ -239,7 +239,6 @@ struct MainPanel: View {
                     ForEach(Array(enabledServices.enumerated()), id: \.element.id) { index, service in
                         DetailCard(
                             service: service,
-                            todayTokens: appState.tokenUsage.todayTokens(for: service.config.serviceType),
                             onRefresh: { Task { await appState.refresh(interactive: true) } }
                         )
                             .opacity(appeared ? 1 : 0)
@@ -614,7 +613,7 @@ struct SettingsPanel: View {
     }
 
     private var currentVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0"
+        Updater.appVersion
     }
 
     private var claudeEnabledBinding: Binding<Bool> {
@@ -795,7 +794,6 @@ struct CircularGaugeView: View {
 
 struct DetailCard: View {
     let service: ServiceViewModel
-    var todayTokens: Int64 = 0
     var onRefresh: (() -> Void)?
 
     var body: some View {
@@ -851,14 +849,6 @@ struct DetailCard: View {
                 }
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
 
-                if todayTokens > 0 {
-                    HStack {
-                        Text("오늘 \(formatTokens(todayTokens)) tokens")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.tertiary)
-                        Spacer()
-                    }
-                }
             }
         }
         .padding(12)
@@ -1112,7 +1102,7 @@ struct UpdateSection: View {
     }
 
     private var currentVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0"
+        Updater.appVersion
     }
 }
 
@@ -1449,9 +1439,9 @@ struct BugReportPanel: View {
         }
 
         let payload: [String: Any] = [
-            "from": "AI Usage Meter <onboarding@resend.dev>",
+            "from": "Token Burn <onboarding@resend.dev>",
             "to": [FeedbackConfig.feedbackEmail],
-            "subject": "Bug Report — AI Usage Meter",
+            "subject": "Bug Report — Token Burn",
             "html": htmlBody
         ]
 

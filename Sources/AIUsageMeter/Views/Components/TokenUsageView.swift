@@ -144,7 +144,6 @@ struct TokenUsageView: View {
         case .hour1: return minuteBars(count: 12, minutesPerBar: 5)
         case .hours24: return hourBars(count: 24)
         case .days7: return dayBars(count: 7)
-        case .month1: return dayBars(count: 30)
         }
     }
 
@@ -190,7 +189,6 @@ struct TokenUsageView: View {
         case .hour1: return summary.tokens(inLastHours: 1)
         case .hours24: return summary.todayTokens
         case .days7: return summary.weekTokens
-        case .month1: return summary.daily.reduce(0) { $0 + $1.totalTokens }
         }
     }
 }

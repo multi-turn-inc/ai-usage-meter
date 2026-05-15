@@ -3,7 +3,7 @@
 DMG_PATH=""
 MOUNT_PATH="/tmp/AIUsageMeter"
 APP_PATH="/Applications"
-APP_NAME="AI Usage Meter"
+APP_NAME="Token Burn"
 
 while [[ "$#" -gt 0 ]]; do
     case $1 in

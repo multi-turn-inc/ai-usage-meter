@@ -51,16 +51,16 @@ class LocalizationManager {
 
     var aiUsage: String {
         switch currentLanguage {
-        case .english: return "AI Usage"
-        case .korean: return "AI 사용량"
-        case .japanese: return "AI使用量"
-        case .chinese: return "AI使用量"
-        case .spanish: return "Uso de IA"
-        case .french: return "Utilisation IA"
-        case .german: return "KI-Nutzung"
-        case .portuguese: return "Uso de IA"
-        case .russian: return "Использование ИИ"
-        case .italian: return "Utilizzo IA"
+        case .english: return "Token Burn"
+        case .korean: return "Token Burn"
+        case .japanese: return "Token Burn"
+        case .chinese: return "Token Burn"
+        case .spanish: return "Token Burn"
+        case .french: return "Token Burn"
+        case .german: return "Token Burn"
+        case .portuguese: return "Token Burn"
+        case .russian: return "Token Burn"
+        case .italian: return "Token Burn"
         }
     }
 

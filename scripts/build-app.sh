@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-APP_NAME="AI Usage Meter"
+APP_NAME="Token Burn"
 BUNDLE_ID="com.aiusagemeter"
 VERSION="${1:-1.0.0}"
 BUILD_DIR=".build/release"
@@ -15,7 +15,7 @@ RESEND_API_KEY="${RESEND_API_KEY:-}"
 FEEDBACK_EMAIL="${FEEDBACK_EMAIL:-}"
 DONATION_URL="${DONATION_URL:-}"
 
-echo "🔨 Building AI Usage Meter v$VERSION..."
+echo "🔨 Building Token Burn v$VERSION..."
 
 swift build -c release
 

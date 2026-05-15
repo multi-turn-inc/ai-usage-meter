@@ -6,7 +6,6 @@ enum TokenTimeScope: String, CaseIterable, Identifiable {
     case hour1 = "1h"
     case hours24 = "24h"
     case days7 = "7d"
-    case month1 = "1m"
 
     var id: String { rawValue }
 
@@ -14,7 +13,6 @@ enum TokenTimeScope: String, CaseIterable, Identifiable {
         switch self {
         case .hour1, .hours24: return 1
         case .days7: return 7
-        case .month1: return 31
         }
     }
 }
