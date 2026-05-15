@@ -27,5 +27,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             themeManager: ThemeManager.shared
         )
         menuBarController = controller
+
+        // Blog render mode: AIM_BLOG_RENDER=1 ./AIUsageMeter
+        if ProcessInfo.processInfo.environment["AIM_BLOG_RENDER"] != nil {
+            Task { @MainActor in
+                // Wait for data to load
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                BlogRenderer.renderAll(appState: appState)
+                NSApp.terminate(nil)
+            }
+        }
     }
 }
