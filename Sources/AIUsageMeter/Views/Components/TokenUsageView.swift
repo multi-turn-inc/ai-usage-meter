@@ -77,33 +77,59 @@ struct TokenUsageView: View {
     // MARK: - Unified Chart
 
     private var unifiedChartView: some View {
-        GeometryReader { geo in
-            let bars = barsForCurrentScope
-            let maxVal = max(bars.map(\.tokens).max() ?? 1, 1)
-            let count = CGFloat(max(bars.count, 1))
-            let gap: CGFloat = bars.count > 50 ? 0.5 : bars.count > 14 ? 1.5 : 3
-            let barW = (geo.size.width - gap * (count - 1)) / count
-            let chartH = geo.size.height - 7
+        let labels = timeLabels
+        return VStack(spacing: 3) {
+            GeometryReader { geo in
+                let bars = barsForCurrentScope
+                let maxVal = max(bars.map(\.tokens).max() ?? 1, 1)
+                let count = CGFloat(max(bars.count, 1))
+                let gap: CGFloat = bars.count > 50 ? 0.5 : bars.count > 14 ? 1.5 : 3
+                let barW = (geo.size.width - gap * (count - 1)) / count
 
-            VStack(spacing: 0) {
-                Spacer(minLength: 0)
-                HStack(alignment: .bottom, spacing: gap) {
-                    ForEach(Array(bars.enumerated()), id: \.offset) { _, bar in
-                        let ratio = CGFloat(bar.tokens) / CGFloat(maxVal)
-                        let barH = bar.tokens > 0 ? max(ratio * chartH, 3) : 0
+                VStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    HStack(alignment: .bottom, spacing: gap) {
+                        ForEach(Array(bars.enumerated()), id: \.offset) { _, bar in
+                            let ratio = CGFloat(bar.tokens) / CGFloat(maxVal)
+                            let barH = bar.tokens > 0 ? max(ratio * geo.size.height, 3) : 0
 
-                        VStack(spacing: 2) {
                             RoundedRectangle(cornerRadius: barW > 5 ? 3 : 1.5, style: .continuous)
                                 .fill(barColor(bar: bar, ratio: ratio))
                                 .frame(width: barW, height: max(barH, 1.5))
-
-                            Circle()
-                                .fill(bar.isCurrent ? Color.orange : .clear)
-                                .frame(width: 4, height: 4)
                         }
                     }
                 }
             }
+
+            HStack {
+                Text(labels.start)
+                Spacer()
+                Text(labels.end)
+            }
+            .font(.system(size: 9, weight: .medium, design: .monospaced))
+            .foregroundStyle(.tertiary)
+        }
+    }
+
+    private var timeLabels: (start: String, end: String) {
+        let now = Date()
+        let calendar = Calendar.current
+        let tf = DateFormatter()
+        tf.timeZone = .current
+
+        switch scope {
+        case .hour1:
+            tf.dateFormat = "HH:mm"
+            let start = calendar.date(byAdding: .minute, value: -60, to: now)!
+            return (tf.string(from: start), "now")
+        case .hours24:
+            tf.dateFormat = "HH:mm"
+            let start = calendar.date(byAdding: .hour, value: -23, to: now)!
+            return (tf.string(from: start), "now")
+        case .days7:
+            tf.dateFormat = "M/d"
+            let start = calendar.date(byAdding: .day, value: -6, to: now)!
+            return (tf.string(from: start), tf.string(from: now))
         }
     }
 
