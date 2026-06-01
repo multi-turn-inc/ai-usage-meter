@@ -189,12 +189,12 @@ class Updater {
             updateAvailable = false
             latestVersion = version
 
-            // Restart the app
-            let binary = destPath
-            let task = Process()
-            task.executableURL = URL(fileURLWithPath: binary)
-            task.arguments = []
-            try task.run()
+            // Restart via LaunchAgent (direct binary launch won't show menu bar on macOS 26)
+            let agentLabel = "com.tokenburn.agent"
+            let stop = Process()
+            stop.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+            stop.arguments = ["kickstart", "-k", "gui/\(getuid())/\(agentLabel)"]
+            try stop.run()
 
             // Exit current instance
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
