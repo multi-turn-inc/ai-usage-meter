@@ -183,6 +183,10 @@ class Updater {
                 try? FileManager.default.copyItem(atPath: sparkleSource, toPath: sparkleDest.path)
             }
 
+            // The copied binary still carries the DMG bundle's signature, which seals that
+            // bundle's Info.plist — launchd would SIGKILL it. Re-sign ad-hoc to make it runnable.
+            LaunchAgentRedirect.makeStandaloneRunnable()
+
             // Clean up backup
             try? FileManager.default.removeItem(atPath: backupPath)
 

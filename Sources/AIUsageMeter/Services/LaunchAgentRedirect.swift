@@ -83,12 +83,18 @@ enum LaunchAgentRedirect {
             return false
         }
 
-        // The in-bundle signature seals the bundle's Info.plist, so the copied binary fails
-        // signature validation ("invalid Info.plist") and is SIGKILLed. Re-sign ad-hoc with no
-        // hardened runtime — this drops the bundle reference and disables library validation so
-        // the Developer ID-signed Sparkle.framework still loads, matching build-app.sh's layout.
-        guard adhocSign(standaloneBinary) else { return false }
+        return makeStandaloneRunnable()
+    }
 
+    /// Ad-hoc re-sign the standalone binary and clear quarantine so launchd can run it.
+    /// The in-bundle signature seals the bundle's Info.plist, so a bare copy fails signature
+    /// validation ("invalid Info.plist") and is SIGKILLed. Ad-hoc signing without a hardened
+    /// runtime drops that bundle reference and disables library validation, so the Developer
+    /// ID-signed Sparkle.framework still loads — matching build-app.sh's standalone layout.
+    /// Shared with the auto-updater, which likewise drops a bundle-signed binary at this path.
+    @discardableResult
+    static func makeStandaloneRunnable() -> Bool {
+        guard adhocSign(standaloneBinary) else { return false }
         clearQuarantine(at: installDir)
         return true
     }
