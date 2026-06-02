@@ -21,6 +21,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var menuBarController: MenuBarPanelController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // macOS 26 workaround: when launched from inside the .app bundle (double-click),
+        // the menu bar icon never appears. Hand off to a standalone copy via LaunchAgent
+        // and quit. Skipped in blog-render mode (run from the standalone CLI binary).
+        if !isBlogRenderMode, LaunchAgentRedirect.shouldRedirect() {
+            if LaunchAgentRedirect.redirectAndStart() {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    NSApp.terminate(nil)
+                }
+                return
+            }
+            // Standalone launch failed — fall through and run in-bundle (degraded, but visible).
+        }
+
         let controller = MenuBarPanelController(
             title: "Token Burn",
             appState: appState,
@@ -29,7 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menuBarController = controller
 
         // Blog render mode: AIM_BLOG_RENDER=1 ./AIUsageMeter
-        if ProcessInfo.processInfo.environment["AIM_BLOG_RENDER"] != nil {
+        if isBlogRenderMode {
             Task { @MainActor in
                 // Wait for data to load
                 try? await Task.sleep(nanoseconds: 3_000_000_000)
@@ -37,5 +50,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 NSApp.terminate(nil)
             }
         }
+    }
+
+    private var isBlogRenderMode: Bool {
+        ProcessInfo.processInfo.environment["AIM_BLOG_RENDER"] != nil
     }
 }
