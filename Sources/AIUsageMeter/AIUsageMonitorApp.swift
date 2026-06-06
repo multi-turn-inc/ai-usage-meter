@@ -31,7 +31,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 return
             }
-            // Standalone launch failed — fall through and run in-bundle (degraded, but visible).
+            // Standalone launch failed — show a recovery alert so the user isn't left with
+            // a silent no-op. Double-clicking the app is the natural recovery path.
+            showRedirectFailureAlert()
+            return
         }
 
         let controller = MenuBarPanelController(
@@ -54,5 +57,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var isBlogRenderMode: Bool {
         ProcessInfo.processInfo.environment["AIM_BLOG_RENDER"] != nil
+    }
+
+    private func showRedirectFailureAlert() {
+        // Bring app to front so the alert is visible (LSUIElement hides it by default).
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+
+        let alert = NSAlert()
+        alert.messageText = "Token Burn couldn't start"
+        alert.informativeText = "The menu bar icon failed to launch. Click Try Again to retry, or check that the app is in /Applications."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Try Again")
+        alert.addButton(withTitle: "Quit")
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            if LaunchAgentRedirect.redirectAndStart() {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    NSApp.terminate(nil)
+                }
+            } else {
+                // Still failing — quit so the user can try moving the app to /Applications.
+                NSApp.terminate(nil)
+            }
+        } else {
+            NSApp.terminate(nil)
+        }
     }
 }
