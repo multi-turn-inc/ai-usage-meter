@@ -56,9 +56,11 @@ class Updater {
     private let githubRepo = "multi-turn-inc/ai-usage-meter"
     private var autoCheckTimer: Timer?
 
+    // Fallback for the standalone LaunchAgent binary, which has no Info.plist —
+    // keep in sync with the released version or settings shows a phantom update.
     static let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
         ?? (Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String)
-        ?? "4.2.0"
+        ?? "4.3.0"
 
     private var currentVersion: String { Self.appVersion }
 
