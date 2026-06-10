@@ -232,10 +232,16 @@ cat > "$PLIST_PATH" << AGENT_PLIST
 </plist>
 AGENT_PLIST
 
-# Re-register so launchd picks up the re-signed binary (no-op on CI: no gui session)
+# Re-register so launchd picks up the re-signed binary (no-op on CI: no gui session).
+# bootstrap right after bootout can race the draining service — retry briefly.
 AGENT_UID=$(id -u)
 launchctl bootout "gui/$AGENT_UID/com.tokenburn.agent" 2>/dev/null || true
-launchctl bootstrap "gui/$AGENT_UID" "$PLIST_PATH" 2>/dev/null || true
+for _ in 1 2 3 4 5; do
+    if launchctl bootstrap "gui/$AGENT_UID" "$PLIST_PATH" 2>/dev/null; then
+        break
+    fi
+    sleep 1
+done
 
 echo "✅ Installed to: $INSTALL_DIR"
 echo "✅ LaunchAgent: $PLIST_PATH"
