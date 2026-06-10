@@ -53,6 +53,7 @@ enum LaunchAgentRedirect {
         if runLaunchctl(["bootstrap", domainTarget, plistPath.path]) {
             return true
         }
+        NSLog("TokenBurn redirect: bootstrap failed, trying kickstart")
         return runLaunchctl(["kickstart", "-k", serviceTarget])
     }
 
@@ -80,6 +81,7 @@ enum LaunchAgentRedirect {
                 }
             }
         } catch {
+            NSLog("TokenBurn redirect: syncStandaloneBinary failed: %@", String(describing: error))
             return false
         }
 
@@ -94,7 +96,10 @@ enum LaunchAgentRedirect {
     /// Shared with the auto-updater, which likewise drops a bundle-signed binary at this path.
     @discardableResult
     static func makeStandaloneRunnable() -> Bool {
-        guard adhocSign(standaloneBinary) else { return false }
+        guard adhocSign(standaloneBinary) else {
+            NSLog("TokenBurn redirect: ad-hoc codesign failed for %@", standaloneBinary.path)
+            return false
+        }
         clearQuarantine(at: installDir)
         return true
     }
