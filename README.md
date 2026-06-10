@@ -6,7 +6,7 @@
 
 Claude Code and Codex usage — remaining quota, token consumption, reset timers — at a glance.
 
-[![macOS](https://img.shields.io/badge/macOS-14.0%2B-000?logo=apple&logoColor=white)](https://www.apple.com/macos/)
+[![macOS](https://img.shields.io/badge/macOS-26%2B-000?logo=apple&logoColor=white)](https://www.apple.com/macos/)
 [![Swift](https://img.shields.io/badge/Swift-5.9-F05138?logo=swift&logoColor=white)](https://swift.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/multi-turn-inc/ai-usage-meter?include_prereleases)](../../releases)
@@ -35,25 +35,31 @@ When an AI agent is actively calling APIs, the bars pulse with a heartbeat anima
 
 **Token tracking** parses local logs directly:
 - Claude Code: `~/.claude/projects/**/*.jsonl`
-- Codex: `~/.codex/logs_2.sqlite`
+- Codex: `~/.codex/sessions/**/*.jsonl` (+ archived sessions)
+- Replayed/duplicated history is deduplicated (ccusage-style accounting)
 - Counts `input_tokens + output_tokens` (matches Claude `/stats`)
+- Shows estimated API-equivalent cost (cache-aware, bundled pricing table)
 - Everything stays local. Nothing is sent to any server.
 
 ## Install
 
-Grab the latest `.dmg` from [Releases](../../releases).
+```bash
+brew install --cask multi-turn-inc/tap/token-burn
+```
+
+Or grab the latest `.dmg` from [Releases](../../releases).
 
 ```bash
 # Or build from source
 git clone https://github.com/multi-turn-inc/ai-usage-meter.git
 cd ai-usage-meter
 swift build -c release
-./scripts/build-app.sh 4.2.0
+./scripts/build-app.sh 4.3.0
 ```
 
 ### Requirements
 
-- macOS 14.0 (Sonoma) or later
+- macOS 26 (Tahoe) or later
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) or [Codex CLI](https://github.com/openai/codex) installed and authenticated
 
 ## How It Works
