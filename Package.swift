@@ -25,6 +25,7 @@ let package = Package(
             resources: [
                 .process("Resources/Icons"),
                 .copy("Resources/Scripts/updater.sh"),
+                .copy("Resources/ModelPricing.json"),
             ],
             swiftSettings: [
                 .define("ENABLE_SPARKLE"),

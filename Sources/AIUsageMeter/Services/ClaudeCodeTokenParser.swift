@@ -33,9 +33,16 @@ final class ClaudeCodeTokenParser {
 
         var dailyBuckets: [String: DailyTokenUsage] = [:]
         var hourlyBuckets: [String: HourlyTokenUsage] = [:]
+        // Resumed/compacted sessions copy earlier messages into new JSONL files;
+        // dedup across all files by message id + request id (ccusage's scheme).
+        var seenMessages = Set<String>()
 
         for file in jsonlFiles {
-            parseMessages(file: file, cutoff: cutoff, dailyBuckets: &dailyBuckets, hourlyBuckets: &hourlyBuckets)
+            parseMessages(
+                file: file, cutoff: cutoff,
+                dailyBuckets: &dailyBuckets, hourlyBuckets: &hourlyBuckets,
+                seenMessages: &seenMessages
+            )
         }
 
         let sortedDaily = dailyBuckets.values.sorted { $0.date < $1.date }
@@ -83,7 +90,8 @@ final class ClaudeCodeTokenParser {
         file url: URL,
         cutoff: Date,
         dailyBuckets: inout [String: DailyTokenUsage],
-        hourlyBuckets: inout [String: HourlyTokenUsage]
+        hourlyBuckets: inout [String: HourlyTokenUsage],
+        seenMessages: inout Set<String>
     ) {
         guard let data = try? Data(contentsOf: url),
               let content = String(data: data, encoding: .utf8) else { return }
@@ -97,11 +105,37 @@ final class ClaudeCodeTokenParser {
             guard let usage = message["usage"] as? [String: Any] else { continue }
             guard let ts = parseTimestamp(obj["timestamp"] as? String), ts >= cutoff else { continue }
 
+            // Dedup replayed history (session resume/compaction copies entries
+            // verbatim, ids included). Entries without a message id pass through.
+            if let messageId = message["id"] as? String {
+                let requestId = obj["requestId"] as? String ?? ""
+                guard seenMessages.insert("\(messageId)|\(requestId)").inserted else { continue }
+            }
+
             // Match Claude Code /stats: count input + output only (no cache tokens)
             let input = int64(usage["input_tokens"])
             let output = int64(usage["output_tokens"])
             let total = input + output
-            guard total > 0 else { continue }
+
+            // Cost includes cache traffic — that's what the API would bill.
+            let cacheRead = int64(usage["cache_read_input_tokens"])
+            var cacheWrite5m = int64(usage["cache_creation_input_tokens"])
+            var cacheWrite1h: Int64 = 0
+            if let cacheCreation = usage["cache_creation"] as? [String: Any] {
+                let ephemeral5m = int64(cacheCreation["ephemeral_5m_input_tokens"])
+                let ephemeral1h = int64(cacheCreation["ephemeral_1h_input_tokens"])
+                if ephemeral5m + ephemeral1h > 0 {
+                    cacheWrite5m = ephemeral5m
+                    cacheWrite1h = ephemeral1h
+                }
+            }
+            let cost = ModelPricing.shared.claudeCost(
+                model: message["model"] as? String,
+                input: input, output: output,
+                cacheWrite5m: cacheWrite5m, cacheWrite1h: cacheWrite1h, cacheRead: cacheRead
+            )
+
+            guard total > 0 || cost > 0 else { continue }
 
             // Daily bucket (keyed by message timestamp)
             let dayKey = dayFormatter.string(from: ts)
@@ -109,15 +143,17 @@ final class ClaudeCodeTokenParser {
             daily.inputTokens += input
             daily.outputTokens += output
             daily.messageCount += 1
+            daily.costUSD += cost
             daily.byService[.claude, default: 0] += total
             dailyBuckets[dayKey] = daily
 
             // Hourly bucket
             let hKey = hourFormatter.string(from: ts)
-            let hourStart = Calendar.current.date(bySetting: .minute, value: 0, of: ts) ?? ts
+            let hourStart = Calendar.current.dateInterval(of: .hour, for: ts)?.start ?? ts
             var hourly = hourlyBuckets[hKey] ?? HourlyTokenUsage(hourKey: hKey, timestamp: hourStart)
             hourly.totalTokens += total
             hourly.messageCount += 1
+            hourly.costUSD += cost
             hourly.byService[.claude, default: 0] += total
             hourlyBuckets[hKey] = hourly
         }

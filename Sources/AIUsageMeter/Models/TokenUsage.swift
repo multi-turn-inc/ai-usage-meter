@@ -34,8 +34,22 @@ struct TokenUsageSummary {
         return daily.first { $0.date == todayKey }?.messageCount ?? 0
     }
 
+    var todayCost: Double {
+        let todayKey = Self.dayKey(for: Date())
+        return daily.first { $0.date == todayKey }?.costUSD ?? 0
+    }
+
     var weekTokens: Int64 {
         daily.reduce(0) { $0 + $1.totalTokens }
+    }
+
+    var weekCost: Double {
+        daily.reduce(0) { $0 + $1.costUSD }
+    }
+
+    func cost(inLastHours hours: Int) -> Double {
+        let cutoff = Calendar.current.date(byAdding: .hour, value: -hours, to: Date()) ?? Date()
+        return hourly.filter { $0.timestamp >= cutoff }.reduce(0) { $0 + $1.costUSD }
     }
 
     func todayTokens(for service: ServiceType) -> Int64 {
@@ -71,6 +85,7 @@ struct DailyTokenUsage: Identifiable {
     var inputTokens: Int64 = 0
     var outputTokens: Int64 = 0
     var messageCount: Int = 0
+    var costUSD: Double = 0
     var byService: [ServiceType: Int64] = [:]
 
     var totalTokens: Int64 {
@@ -86,5 +101,6 @@ struct HourlyTokenUsage: Identifiable {
     let timestamp: Date
     var totalTokens: Int64 = 0
     var messageCount: Int = 0
+    var costUSD: Double = 0
     var byService: [ServiceType: Int64] = [:]
 }

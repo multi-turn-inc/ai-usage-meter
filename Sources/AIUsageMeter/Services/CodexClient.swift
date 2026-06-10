@@ -156,55 +156,35 @@ class CodexClient: BaseAPIClient, AIServiceAPI {
             return stats
         }
 
-        // Get recent session files (last 24 hours to find latest rate_limits)
+        // Per-turn deltas with replay/fork dedup (CodexSessionParser), so the 24h
+        // window only counts tokens actually used inside it — summing each file's
+        // session-cumulative total would leak usage from before the window.
         let oneDayAgo = calendar.date(byAdding: .day, value: -1, to: now)!
-        let sessionFiles = try findRecentSessionFiles(
-            in: sessionsPath,
-            since: oneDayAgo
-        )
+        let parsed = CodexSessionParser.shared.parse(since: oneDayAgo)
 
-        stats.sessionCount = sessionFiles.count
+        stats.sessionCount = parsed.sessionCount
+        stats.messageCount = parsed.events.count
 
-        // Parse each session file, keeping the most recent rate_limits
-        var latestPrimaryPercent: Double?
-        var latestSecondaryPercent: Double?
-        var latestPrimaryWindowMinutes: Int?
-        var latestSecondaryWindowMinutes: Int?
-        var latestPrimaryResetTime: Date?
-        var latestSecondaryResetTime: Date?
-        var latestPlanType: String?
-
-        for filePath in sessionFiles {
-            if let sessionData = parseSessionFile(at: filePath) {
-                stats.totalTokens += sessionData.tokens
-                stats.inputTokens += sessionData.inputTokens
-                stats.outputTokens += sessionData.outputTokens
-                stats.messageCount += sessionData.messageCount
-
-                // Keep the most recent rate_limits data
-                if let primary = sessionData.primaryUsedPercent {
-                    latestPrimaryPercent = primary
-                }
-                if let secondary = sessionData.secondaryUsedPercent {
-                    latestSecondaryPercent = secondary
-                }
-                if let windowMinutes = sessionData.primaryWindowMinutes {
-                    latestPrimaryWindowMinutes = windowMinutes
-                }
-                if let windowMinutes = sessionData.secondaryWindowMinutes {
-                    latestSecondaryWindowMinutes = windowMinutes
-                }
-                if let resetTime = sessionData.primaryResetTime {
-                    latestPrimaryResetTime = resetTime
-                }
-                if let resetTime = sessionData.secondaryResetTime {
-                    latestSecondaryResetTime = resetTime
-                }
-                if let plan = sessionData.planType {
-                    latestPlanType = plan
-                }
-            }
+        var costUSD: Double = 0
+        for event in parsed.events {
+            stats.totalTokens += event.totalTokens
+            stats.inputTokens += event.inputTokens
+            stats.outputTokens += event.outputTokens
+            costUSD += ModelPricing.shared.codexCost(
+                model: event.model,
+                input: event.inputTokens,
+                cachedInput: event.cachedInputTokens,
+                output: event.outputTokens
+            )
         }
+
+        let latestPrimaryPercent = parsed.rateLimits.primaryUsedPercent
+        let latestSecondaryPercent = parsed.rateLimits.secondaryUsedPercent
+        let latestPrimaryWindowMinutes = parsed.rateLimits.primaryWindowMinutes
+        let latestSecondaryWindowMinutes = parsed.rateLimits.secondaryWindowMinutes
+        let latestPrimaryResetTime = parsed.rateLimits.primaryResetTime
+        let latestSecondaryResetTime = parsed.rateLimits.secondaryResetTime
+        let latestPlanType = parsed.rateLimits.planType
 
         if let resetTime = latestPrimaryResetTime {
             let windowMinutes = latestPrimaryWindowMinutes ?? 300
@@ -251,8 +231,8 @@ class CodexClient: BaseAPIClient, AIServiceAPI {
             stats.fiveHourUsagePercent = min(100, Double(stats.messageCount) / messageLimit * 100)
         }
 
-        // Estimate cost (~5 credits per local task, $0.01 per credit)
-        stats.estimatedCost = Decimal(stats.messageCount) * Decimal(0.05)
+        // Real API-equivalent cost from per-event model pricing
+        stats.estimatedCost = Decimal(costUSD)
 
         return stats
     }
@@ -467,142 +447,6 @@ class CodexClient: BaseAPIClient, AIServiceAPI {
         components.path = path
         components.query = nil
         return components.url
-    }
-
-    private func findRecentSessionFiles(in path: String, since date: Date) throws -> [String] {
-        let fileManager = FileManager.default
-        var sessionFiles: [(path: String, modDate: Date)] = []
-
-        // Walk through YYYY/MM/DD structure
-        let enumerator = fileManager.enumerator(
-            at: URL(fileURLWithPath: path),
-            includingPropertiesForKeys: [.contentModificationDateKey],
-            options: [.skipsHiddenFiles]
-        )
-
-        while let fileURL = enumerator?.nextObject() as? URL {
-            if fileURL.pathExtension == "jsonl" {
-                // Check modification date
-                if let attrs = try? fileManager.attributesOfItem(atPath: fileURL.path),
-                   let modDate = attrs[.modificationDate] as? Date,
-                   modDate >= date {
-                    sessionFiles.append((fileURL.path, modDate))
-                }
-            }
-        }
-
-        // Sort by modification date (oldest first, so newest is processed last)
-        return sessionFiles.sorted { $0.modDate < $1.modDate }.map { $0.path }
-    }
-
-    private struct SessionData {
-        var tokens: Int64 = 0
-        var inputTokens: Int64 = 0
-        var outputTokens: Int64 = 0
-        var messageCount: Int = 0
-        var primaryUsedPercent: Double?  // 5-hour window
-        var secondaryUsedPercent: Double?  // 7-day window
-        var primaryWindowMinutes: Int?
-        var secondaryWindowMinutes: Int?
-        var primaryResetTime: Date?  // 5-hour reset time
-        var secondaryResetTime: Date?  // 7-day reset time
-        var planType: String?
-    }
-
-    private func parseSessionFile(at path: String) -> SessionData? {
-        guard let content = try? String(contentsOfFile: path, encoding: .utf8) else {
-            return nil
-        }
-
-        var data = SessionData()
-        let lines = content.components(separatedBy: .newlines)
-
-        for line in lines where !line.isEmpty {
-            guard let jsonData = line.data(using: .utf8),
-                  let event = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
-                continue
-            }
-
-            // Check for event_msg wrapper
-            let payload: [String: Any]
-            if let eventPayload = event["payload"] as? [String: Any] {
-                payload = eventPayload
-            } else {
-                payload = event
-            }
-
-            // Count messages (turn.completed events)
-            if let type = payload["type"] as? String {
-                if type == "turn.completed" {
-                    data.messageCount += 1
-                }
-
-                // Parse token_count events with rate_limits
-                if type == "token_count" {
-                    // Extract rate limits (most valuable data!)
-                    if let rateLimits = payload["rate_limits"] as? [String: Any] {
-                        if let primary = rateLimits["primary"] as? [String: Any] {
-                            if let usedPercent = primary["used_percent"] as? Double {
-                                data.primaryUsedPercent = usedPercent
-                            }
-                            if let windowMinutes = primary["window_minutes"] as? Int {
-                                data.primaryWindowMinutes = windowMinutes
-                            } else if let windowMinutes = primary["window_minutes"] as? Double {
-                                data.primaryWindowMinutes = Int(windowMinutes)
-                            }
-                            // Parse reset time (Unix timestamp)
-                            if let resetTimestamp = primary["resets_at"] as? Double {
-                                data.primaryResetTime = Date(timeIntervalSince1970: resetTimestamp)
-                            } else if let resetTimestamp = primary["resets_at"] as? Int {
-                                data.primaryResetTime = Date(timeIntervalSince1970: Double(resetTimestamp))
-                            }
-                        }
-                        if let secondary = rateLimits["secondary"] as? [String: Any] {
-                            if let usedPercent = secondary["used_percent"] as? Double {
-                                data.secondaryUsedPercent = usedPercent
-                            }
-                            if let windowMinutes = secondary["window_minutes"] as? Int {
-                                data.secondaryWindowMinutes = windowMinutes
-                            } else if let windowMinutes = secondary["window_minutes"] as? Double {
-                                data.secondaryWindowMinutes = Int(windowMinutes)
-                            }
-                            if let resetTimestamp = secondary["resets_at"] as? Double {
-                                data.secondaryResetTime = Date(timeIntervalSince1970: resetTimestamp)
-                            } else if let resetTimestamp = secondary["resets_at"] as? Int {
-                                data.secondaryResetTime = Date(timeIntervalSince1970: Double(resetTimestamp))
-                            }
-                        }
-                        if let planType = rateLimits["plan_type"] as? String {
-                            data.planType = planType
-                        }
-                    }
-
-                    // Extract token usage
-                    if let info = payload["info"] as? [String: Any],
-                       let tokenUsage = info["total_token_usage"] as? [String: Any] {
-                        if let input = tokenUsage["input_tokens"] as? Int {
-                            data.inputTokens = Int64(input)
-                        }
-                        if let output = tokenUsage["output_tokens"] as? Int {
-                            data.outputTokens = Int64(output)
-                        }
-                        if let total = tokenUsage["total_tokens"] as? Int {
-                            data.tokens = Int64(total)
-                        }
-                    }
-                }
-            }
-        }
-
-        // If no token counts, estimate from messages
-        if data.tokens == 0 && data.messageCount > 0 {
-            // Rough estimate: ~2000 tokens per message average
-            data.tokens = Int64(data.messageCount) * 2000
-            data.inputTokens = Int64(Double(data.tokens) * 0.3)
-            data.outputTokens = Int64(Double(data.tokens) * 0.7)
-        }
-
-        return data
     }
 
     private func nextResetDate(after resetTime: Date, windowMinutes: Int, now: Date) -> Date {

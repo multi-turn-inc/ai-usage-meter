@@ -12,16 +12,26 @@ struct TokenUsageView: View {
         VStack(spacing: 8) {
             // Number + scope picker
             HStack(alignment: .top) {
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text(formatTokens(tokensForScope))
-                        .font(.system(size: 24, weight: .heavy, design: .rounded))
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                        .contentTransition(.numericText())
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        Text(formatTokens(tokensForScope))
+                            .font(.system(size: 24, weight: .heavy, design: .rounded))
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .contentTransition(.numericText())
 
-                    Text("tokens")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.quaternary)
+                        Text("tokens")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.quaternary)
+                    }
+
+                    if costForScope > 0 {
+                        Text("≈ \(formatCost(costForScope)) API")
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundStyle(.tertiary)
+                            .contentTransition(.numericText())
+                            .help("Estimated cost at pay-per-use API prices")
+                    }
                 }
                 .animation(.spring(response: 0.35, dampingFraction: 0.85), value: scopeIndex)
 
@@ -216,6 +226,20 @@ struct TokenUsageView: View {
         case .hours24: return summary.todayTokens
         case .days7: return summary.weekTokens
         }
+    }
+
+    private var costForScope: Double {
+        switch scope {
+        case .hour1: return summary.cost(inLastHours: 1)
+        case .hours24: return summary.todayCost
+        case .days7: return summary.weekCost
+        }
+    }
+
+    private func formatCost(_ cost: Double) -> String {
+        if cost < 0.01 { return "<$0.01" }
+        if cost >= 100 { return String(format: "$%.0f", cost) }
+        return String(format: "$%.2f", cost)
     }
 }
 
