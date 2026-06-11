@@ -19,6 +19,7 @@ class AppState {
     private var refreshInterval: TimeInterval = 300
     private var didStartRefreshWorkflow: Bool = false
     private var processMonitorTimer: Timer?
+    private var rateLimitRetryScheduled = false
     private let dataStore = DataStore.shared
 
     // Credential file watchers for instant account-switch detection
@@ -413,6 +414,12 @@ class AppState {
                     if let apiError = error as? APIError,
                        case .rateLimitExceeded = apiError {
                         print("⏳ \(serviceName): rate limited, keeping previous data")
+                        // First load still on placeholder ("Loading") — the 5-min
+                        // cycle would leave it stuck, so retry sooner once the limit
+                        // likely cleared, instead of waiting a full interval.
+                        if services[index].usage.tier == "Loading" {
+                            scheduleRateLimitRetry()
+                        }
                     } else {
                         services[index].lastError = error.localizedDescription
                         errors.append("\(serviceName): \(error.localizedDescription)")
@@ -439,6 +446,18 @@ class AppState {
             }
 
             print("🏁 Refresh complete. Errors: \(errorMessage ?? "none")")
+        }
+    }
+
+    /// After a 429 on first load, retry well before the normal 5-min cycle so the
+    /// card doesn't sit on "Loading". Coalesced so repeated 429s schedule just one.
+    private func scheduleRateLimitRetry() {
+        guard !rateLimitRetryScheduled else { return }
+        rateLimitRetryScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 75) { [weak self] in
+            guard let self else { return }
+            self.rateLimitRetryScheduled = false
+            Task { await self.refresh(interactive: false) }
         }
     }
 

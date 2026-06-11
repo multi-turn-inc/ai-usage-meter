@@ -484,24 +484,57 @@ struct SettingsPanel: View {
 
                     // MARK: - Update
                     settingsSection(title: L.update, delay: 0.12) {
-                        HStack {
-                            settingsIcon(systemName: "arrow.triangle.2.circlepath", color: .secondary)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Version")
-                                    .font(.system(size: 13, weight: .medium))
-                                Text("v\(currentVersion)")
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(.tertiary)
+                        VStack(spacing: 10) {
+                            HStack {
+                                settingsIcon(systemName: "arrow.triangle.2.circlepath", color: .secondary)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Version")
+                                        .font(.system(size: 13, weight: .medium))
+                                    Text("v\(currentVersion)")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.tertiary)
+                                }
+                                Spacer()
+                                Button {
+                                    Updater.shared.checkForUpdates()
+                                } label: {
+                                    Text(L.checkUpdate)
+                                        .font(.system(size: 12, weight: .medium))
+                                }
+                                .buttonStyle(.glass)
+                                .buttonBorderShape(.capsule)
                             }
-                            Spacer()
-                            Button {
-                                Updater.shared.checkForUpdates()
-                            } label: {
-                                Text(L.checkUpdate)
-                                    .font(.system(size: 12, weight: .medium))
+
+                            if Updater.shared.updateAvailable, let latest = Updater.shared.latestVersion {
+                                Divider().opacity(0.2)
+                                Button {
+                                    Updater.shared.checkForUpdates()
+                                } label: {
+                                    HStack(spacing: 10) {
+                                        Image(systemName: "arrow.down.circle.fill")
+                                            .font(.system(size: 18))
+                                            .foregroundStyle(.green)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text("새 버전 v\(latest)")
+                                                .font(.system(size: 13, weight: .semibold))
+                                                .foregroundStyle(.primary)
+                                            Text(Updater.shared.isUpdating ? "업데이트 중…" : "지금 업데이트")
+                                                .font(.system(size: 10))
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        Spacer()
+                                        if Updater.shared.isUpdating {
+                                            ProgressView().controlSize(.small)
+                                        } else {
+                                            Image(systemName: "chevron.right")
+                                                .font(.system(size: 10, weight: .semibold))
+                                                .foregroundStyle(.quaternary)
+                                        }
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(Updater.shared.isUpdating)
                             }
-                            .buttonStyle(.glass)
-                            .buttonBorderShape(.capsule)
                         }
                         .padding(10)
                         .premiumCard()
@@ -525,15 +558,15 @@ struct SettingsPanel: View {
                             Divider().opacity(0.2).padding(.leading, 52)
 
                             Button {
-                                if let url = URL(string: FeedbackConfig.donationURL) {
+                                if let url = URL(string: "https://github.com/multi-turn-inc/ai-usage-meter") {
                                     NSWorkspace.shared.open(url)
                                 }
                             } label: {
-                                settingsRow(icon: "cup.and.heat.waves", iconColor: .secondary) {
-                                    Text("Token Burn 응원하기")
+                                settingsRow(icon: "star.fill", iconColor: .yellow) {
+                                    Text("GitHub에서 Star 주기")
                                         .font(.system(size: 13, weight: .medium))
                                     Spacer()
-                                    Image(systemName: "chevron.right")
+                                    Image(systemName: "arrow.up.right")
                                         .font(.system(size: 10, weight: .semibold))
                                         .foregroundStyle(.quaternary)
                                 }
