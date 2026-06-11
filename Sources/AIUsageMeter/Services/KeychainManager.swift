@@ -134,55 +134,6 @@ class KeychainManager {
         claudeCodeCredentialFileURLs().contains { fileManager.fileExists(atPath: $0.path) }
     }
 
-    /// If no credential file exists, restore from Keychain using the
-    /// `security` CLI (which has its own Keychain access and avoids
-    /// app-specific ACL issues with SecItemCopyMatching).
-    func ensureCredentialFileExists() {
-        let urls = claudeCodeCredentialFileURLs()
-        let hasFile = urls.contains { fileManager.fileExists(atPath: $0.path) }
-        if hasFile { return }
-
-        // First try via SecItem API
-        let records = getAllClaudeCodeCredentialRecords(includingDiscoveredServices: true, allowInteraction: true)
-        if let creds = selectBestCredentials(from: records), !creds.isExpired {
-            try? synchronizeClaudeCodeCredentialsToFiles(creds)
-            cachedClaudeCredentials = creds
-            print("🔑 Credential file restored from Keychain (API)")
-            return
-        }
-
-        // Fallback: use `security` CLI which has broader Keychain access
-        let pipe = Pipe()
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
-        process.arguments = ["find-generic-password", "-s", "Claude Code-credentials", "-w"]
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-            guard process.terminationStatus == 0 else { return }
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            guard !data.isEmpty,
-                  let creds = parseCredentials(from: data) else { return }
-
-            if let primaryURL = urls.first {
-                let parent = primaryURL.deletingLastPathComponent()
-                if !fileManager.fileExists(atPath: parent.path) {
-                    try fileManager.createDirectory(at: parent, withIntermediateDirectories: true)
-                }
-                try data.write(to: primaryURL, options: .atomic)
-                // Restrict permissions
-                try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: primaryURL.path)
-                cachedClaudeCredentials = creds
-                print("🔑 Credential file restored from Keychain (CLI)")
-            }
-        } catch {
-            print("⚠️ Failed to restore credentials from Keychain CLI: \(error)")
-        }
-    }
-
     /// Clears the cached credentials (call on account switch)
     func clearCredentialsCache() {
         cachedClaudeCredentials = nil
@@ -378,10 +329,16 @@ class KeychainManager {
     }
 
     private func keychainQuery(_ base: [String: Any], allowInteraction: Bool) -> [String: Any] {
-        guard !allowInteraction else { return base }
+        // Always read non-interactively, regardless of the caller's hint. The
+        // "Claude Code-credentials" item is owned by Claude Code; our ad-hoc-signed
+        // binary isn't on its Keychain ACL, so an interactive read pops the login
+        // password prompt on every token refresh — and "Always Allow" never sticks,
+        // because an ad-hoc signature has no stable designated requirement to bind
+        // the ACL to. The on-disk credential file (~/.claude/.credentials.json) is
+        // the source of truth; the Keychain is a best-effort read-only fallback for
+        // the case where no file exists yet.
+        _ = allowInteraction
         var query = base
-        // Avoid showing Keychain password / permission dialogs during automatic refresh.
-        // (Preferred over deprecated kSecUseAuthenticationUI.)
         let context = LAContext()
         context.interactionNotAllowed = true
         query[kSecUseAuthenticationContext as String] = context
@@ -529,7 +486,6 @@ extension KeychainManager {
                             scopes: grantedScopes
                         )
 
-                        try updateClaudeCodeCredentials(newCredentials, storage: record.storage)
                         try synchronizeClaudeCodeCredentialsToFiles(newCredentials)
                         cachedClaudeCredentials = newCredentials
                         return newCredentials
@@ -563,43 +519,6 @@ extension KeychainManager {
         }
 
         throw lastError ?? TokenRefreshError.invalidResponse
-    }
-
-    private func updateClaudeCodeCredentials(_ credentials: ClaudeCodeCredentials, storage: ClaudeCodeCredentialStorage) throws {
-        switch storage {
-        case .keychain(let service, let account):
-            try updateClaudeCodeCredentialsInKeychain(credentials, service: service, account: account)
-        case .file(let url):
-            try updateClaudeCodeCredentialsFile(credentials, at: url)
-        }
-    }
-
-    private func updateClaudeCodeCredentialsInKeychain(_ credentials: ClaudeCodeCredentials, service: String, account: String) throws {
-        let wrapper = ClaudeCodeCredentialsWrapper(claudeAiOauth: credentials)
-        let data = try JSONEncoder().encode(wrapper)
-
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-
-        let attributes: [String: Any] = [
-            kSecValueData as String: data
-        ]
-
-        let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
-
-        if status == errSecItemNotFound {
-            var newQuery = query
-            newQuery[kSecValueData as String] = data
-            let addStatus = SecItemAdd(newQuery as CFDictionary, nil)
-            guard addStatus == errSecSuccess else {
-                throw KeychainError.saveFailed(addStatus)
-            }
-        } else if status != errSecSuccess {
-            throw KeychainError.saveFailed(status)
-        }
     }
 
     private func synchronizeClaudeCodeCredentialsToFiles(_ credentials: ClaudeCodeCredentials) throws {
