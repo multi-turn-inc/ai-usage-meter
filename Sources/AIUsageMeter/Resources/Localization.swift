@@ -658,6 +658,36 @@ class LocalizationManager {
         }
     }
 
+    var starOnGitHub: String {
+        switch currentLanguage {
+        case .english: return "Star on GitHub"
+        case .korean: return "GitHub에서 Star 주기"
+        case .japanese: return "GitHubでスターを付ける"
+        case .chinese: return "在 GitHub 上加星"
+        case .spanish: return "Dar estrella en GitHub"
+        case .french: return "Mettre une étoile sur GitHub"
+        case .german: return "Auf GitHub mit Stern markieren"
+        case .portuguese: return "Dar uma estrela no GitHub"
+        case .russian: return "Поставить звезду на GitHub"
+        case .italian: return "Metti una stella su GitHub"
+        }
+    }
+
+    var newVersion: String {
+        switch currentLanguage {
+        case .english: return "New version"
+        case .korean: return "새 버전"
+        case .japanese: return "新しいバージョン"
+        case .chinese: return "新版本"
+        case .spanish: return "Nueva versión"
+        case .french: return "Nouvelle version"
+        case .german: return "Neue Version"
+        case .portuguese: return "Nova versão"
+        case .russian: return "Новая версия"
+        case .italian: return "Nuova versione"
+        }
+    }
+
     var includeDiagnostics: String {
         switch currentLanguage {
         case .english: return "Include diagnostics"

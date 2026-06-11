@@ -515,10 +515,10 @@ struct SettingsPanel: View {
                                             .font(.system(size: 18))
                                             .foregroundStyle(.green)
                                         VStack(alignment: .leading, spacing: 2) {
-                                            Text("새 버전 v\(latest)")
+                                            Text("\(L.newVersion) v\(latest)")
                                                 .font(.system(size: 13, weight: .semibold))
                                                 .foregroundStyle(.primary)
-                                            Text(Updater.shared.isUpdating ? "업데이트 중…" : "지금 업데이트")
+                                            Text(Updater.shared.isUpdating ? L.updating : L.updateNow)
                                                 .font(.system(size: 10))
                                                 .foregroundStyle(.secondary)
                                         }
@@ -563,7 +563,7 @@ struct SettingsPanel: View {
                                 }
                             } label: {
                                 settingsRow(icon: "star.fill", iconColor: .yellow) {
-                                    Text("GitHub에서 Star 주기")
+                                    Text(L.starOnGitHub)
                                         .font(.system(size: 13, weight: .medium))
                                     Spacer()
                                     Image(systemName: "arrow.up.right")
