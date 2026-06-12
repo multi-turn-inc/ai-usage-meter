@@ -688,6 +688,36 @@ class LocalizationManager {
         }
     }
 
+    var lastUpdated: String {
+        switch currentLanguage {
+        case .english: return "Last updated"
+        case .korean: return "마지막 업데이트"
+        case .japanese: return "最終更新"
+        case .chinese: return "上次更新"
+        case .spanish: return "Última actualización"
+        case .french: return "Dernière mise à jour"
+        case .german: return "Zuletzt aktualisiert"
+        case .portuguese: return "Última atualização"
+        case .russian: return "Последнее обновление"
+        case .italian: return "Ultimo aggiornamento"
+        }
+    }
+
+    var dataStale: String {
+        switch currentLanguage {
+        case .english: return "Data may be outdated"
+        case .korean: return "데이터가 오래되었을 수 있습니다"
+        case .japanese: return "データが古い可能性があります"
+        case .chinese: return "数据可能已过时"
+        case .spanish: return "Los datos pueden estar desactualizados"
+        case .french: return "Les données peuvent être obsolètes"
+        case .german: return "Daten könnten veraltet sein"
+        case .portuguese: return "Os dados podem estar desatualizados"
+        case .russian: return "Данные могут быть устаревшими"
+        case .italian: return "I dati potrebbero essere obsoleti"
+        }
+    }
+
     var includeDiagnostics: String {
         switch currentLanguage {
         case .english: return "Include diagnostics"

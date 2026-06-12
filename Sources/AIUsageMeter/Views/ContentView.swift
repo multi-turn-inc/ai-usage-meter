@@ -882,11 +882,37 @@ struct DetailCard: View {
                 }
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
 
+                lastUpdatedRow
             }
         }
         .padding(12)
         .premiumCard()
         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: service.isAuthError)
+    }
+
+    /// Shows how long ago the data was last refreshed. Turns orange when stale
+    /// (>10 min, i.e. more than two missed 5-min cycles) so a frozen value from a
+    /// failed refresh isn't mistaken for the current number.
+    private var lastUpdatedRow: some View {
+        let interval = max(0, Date().timeIntervalSince(service.usage.lastUpdated))
+        let isStale = interval > 600
+        return HStack(spacing: 3) {
+            Image(systemName: isStale ? "exclamationmark.arrow.circlepath" : "arrow.clockwise")
+                .font(.system(size: 8, weight: .semibold))
+            Text(relativeAge(interval))
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+        }
+        .foregroundStyle(isStale ? Color.orange : Color.secondary.opacity(0.55))
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .help(isStale ? L.dataStale : L.lastUpdated)
+    }
+
+    private func relativeAge(_ interval: TimeInterval) -> String {
+        let s = Int(interval)
+        if s < 60 { return "<1m" }
+        if s < 3600 { return "\(s / 60)m" }
+        if s < 86400 { return "\(s / 3600)h" }
+        return "\(s / 86400)d"
     }
 
     private var isGemini: Bool {
