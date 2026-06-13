@@ -882,7 +882,7 @@ struct DetailCard: View {
                 }
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
 
-                lastUpdatedRow
+                staleWarningRow
             }
         }
         .padding(12)
@@ -890,21 +890,23 @@ struct DetailCard: View {
         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: service.isAuthError)
     }
 
-    /// Shows how long ago the data was last refreshed. Turns orange when stale
-    /// (>10 min, i.e. more than two missed 5-min cycles) so a frozen value from a
+    /// Nothing while data is fresh. Only when it's stale (>10 min — more than two
+    /// missed 5-min cycles) does an orange warning appear, so a frozen value from a
     /// failed refresh isn't mistaken for the current number.
-    private var lastUpdatedRow: some View {
+    @ViewBuilder
+    private var staleWarningRow: some View {
         let interval = max(0, Date().timeIntervalSince(service.usage.lastUpdated))
-        let isStale = interval > 600
-        return HStack(spacing: 3) {
-            Image(systemName: isStale ? "exclamationmark.arrow.circlepath" : "arrow.clockwise")
-                .font(.system(size: 8, weight: .semibold))
-            Text(relativeAge(interval))
-                .font(.system(size: 9, weight: .medium, design: .monospaced))
+        if interval > 600 {
+            HStack(spacing: 3) {
+                Image(systemName: "exclamationmark.arrow.circlepath")
+                    .font(.system(size: 8, weight: .semibold))
+                Text(relativeAge(interval))
+                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+            }
+            .foregroundStyle(.orange)
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .help(L.dataStale)
         }
-        .foregroundStyle(isStale ? Color.orange : Color.secondary.opacity(0.55))
-        .frame(maxWidth: .infinity, alignment: .trailing)
-        .help(isStale ? L.dataStale : L.lastUpdated)
     }
 
     private func relativeAge(_ interval: TimeInterval) -> String {
