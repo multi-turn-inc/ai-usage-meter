@@ -946,12 +946,16 @@ struct LoadView: View {
         .task {
             // Sample while the tab is open; auto-cancels when it closes. The first
             // CPU read only seeds the tick baseline, so sample once, then loop.
+            // Load is cheap (in-process) → 1s for a dense, smooth trail; the
+            // process list shells out to `ps`, so refresh it only every 3s.
             load.sample()
             await advisor.sampleNow()
+            var tick = 0
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
                 load.sample()
-                await advisor.sampleNow()
+                tick += 1
+                if tick % 3 == 0 { await advisor.sampleNow() }
             }
         }
     }
@@ -959,28 +963,27 @@ struct LoadView: View {
     // MARK: 2-axis gauge
 
     private var loadGauge: some View {
-        let cpuFrac = CGFloat(min(max(load.cpu, 0), 100) / 100)
-        let gpuFrac = CGFloat(min(max(load.gpu, 0), 100) / 100)
-        return VStack(spacing: 8) {
+        VStack(spacing: 8) {
             HStack(alignment: .center, spacing: 8) {
                 // GPU (vertical axis)
                 VStack(spacing: 1) {
                     Text("GPU").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
                     Text("\(Int(load.gpu.rounded()))%").font(.system(size: 13, weight: .bold, design: .rounded))
+                        .contentTransition(.numericText())
                 }
                 .frame(width: 36)
 
-                ZStack(alignment: .bottomLeading) {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color(nsColor: .separatorColor).opacity(0.12))
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(ramColor.gradient)
-                        .frame(width: max(8, boxW * cpuFrac), height: max(8, boxH * gpuFrac))
-                        .animation(.spring(response: 0.5, dampingFraction: 0.85), value: load.cpu)
-                        .animation(.spring(response: 0.5, dampingFraction: 0.85), value: load.gpu)
-                        .animation(.easeInOut(duration: 0.4), value: load.ram)
-                }
-                .frame(width: boxW, height: boxH)
+                LoadTrajectory(load: load)
+                    .frame(width: boxW, height: boxH)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(Color(nsColor: .separatorColor).opacity(0.10))
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(Color(nsColor: .separatorColor).opacity(0.18), lineWidth: 1)
+                    )
             }
 
             // CPU (horizontal axis) — aligned under the box, not the GPU label
@@ -988,14 +991,15 @@ struct LoadView: View {
                 Spacer().frame(width: 44)
                 Text("CPU").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
                 Text("\(Int(load.cpu.rounded()))%").font(.system(size: 13, weight: .bold, design: .rounded))
+                    .contentTransition(.numericText())
                 Spacer()
             }
 
-            // RAM legend (the fill color)
+            // RAM legend (the trail color)
             HStack(spacing: 6) {
                 Spacer().frame(width: 44)
                 RoundedRectangle(cornerRadius: 3, style: .continuous)
-                    .fill(ramColor.gradient)
+                    .fill(LoadTrajectory.ramColor(load.ram).gradient)
                     .frame(width: 12, height: 12)
                 Text("\(L.ram) \(Int(load.ram.rounded()))%")
                     .font(.system(size: 11, weight: .medium))
@@ -1078,12 +1082,82 @@ struct LoadView: View {
                 .foregroundStyle(.tertiary)
         }
     }
+}
 
-    private var ramColor: Color {
-        let r = load.ram
-        if r < 60 { return .green }
-        if r < 80 { return .yellow }
-        return .red
+/// The 2-axis load trail: x = CPU, y = GPU (from the bottom), drawn as a fading
+/// comet whose color is RAM pressure. The head eases from the previous sample to
+/// the newest over one interval, redrawn every display frame via TimelineView so
+/// it glides smoothly at 60 fps even though samples land once a second.
+struct LoadTrajectory: View {
+    var load: SystemLoadMonitor
+    private let interval: Double = 1.0
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            Canvas { ctx, size in
+                draw(ctx, size, now: timeline.date)
+            }
+        }
+    }
+
+    private func draw(_ ctx: GraphicsContext, _ size: CGSize, now: Date) {
+        // faint grid
+        let grid = Color.gray.opacity(0.12)
+        for f in [0.25, 0.5, 0.75] {
+            var v = Path(); v.move(to: CGPoint(x: size.width * f, y: 0)); v.addLine(to: CGPoint(x: size.width * f, y: size.height))
+            ctx.stroke(v, with: .color(grid), lineWidth: 0.5)
+            var h = Path(); h.move(to: CGPoint(x: 0, y: size.height * f)); h.addLine(to: CGPoint(x: size.width, y: size.height * f))
+            ctx.stroke(h, with: .color(grid), lineWidth: 0.5)
+        }
+
+        let hist = load.history
+        guard !hist.isEmpty else { return }
+
+        func map(_ cpu: Double, _ gpu: Double) -> CGPoint {
+            CGPoint(x: CGFloat(min(max(cpu, 0), 100) / 100) * size.width,
+                    y: size.height - CGFloat(min(max(gpu, 0), 100) / 100) * size.height)
+        }
+
+        // Ease the head from the previous sample toward the newest over `interval`.
+        let last = hist[hist.count - 1]
+        let prev = hist.count >= 2 ? hist[hist.count - 2] : last
+        let t = min(1, max(0, now.timeIntervalSince(load.lastSampleAt) / interval))
+        let te = 1 - pow(1 - t, 3)   // easeOutCubic
+        let headCPU = prev.cpu + (last.cpu - prev.cpu) * te
+        let headGPU = prev.gpu + (last.gpu - prev.gpu) * te
+        let headRAM = prev.ram + (last.ram - prev.ram) * te
+        let color = Self.ramColor(headRAM)
+
+        // History points, with the newest replaced by the eased head.
+        var pts: [CGPoint] = []
+        if hist.count >= 2 {
+            for i in 0..<(hist.count - 1) { pts.append(map(hist[i].cpu, hist[i].gpu)) }
+        }
+        pts.append(map(headCPU, headGPU))
+
+        // Fading comet: older segments thinner + more transparent.
+        if pts.count >= 2 {
+            for i in 1..<pts.count {
+                let frac = Double(i) / Double(pts.count - 1)   // 0 oldest → 1 newest
+                let op = pow(frac, 1.6)
+                let w = 1.0 + frac * 3.5
+                var seg = Path(); seg.move(to: pts[i - 1]); seg.addLine(to: pts[i])
+                ctx.stroke(seg, with: .color(color.opacity(op)),
+                           style: StrokeStyle(lineWidth: w, lineCap: .round, lineJoin: .round))
+            }
+        }
+
+        // Glowing head.
+        let head = pts[pts.count - 1]
+        ctx.fill(Path(ellipseIn: CGRect(x: head.x - 8, y: head.y - 8, width: 16, height: 16)), with: .color(color.opacity(0.22)))
+        ctx.fill(Path(ellipseIn: CGRect(x: head.x - 4, y: head.y - 4, width: 8, height: 8)), with: .color(color))
+        ctx.fill(Path(ellipseIn: CGRect(x: head.x - 1.5, y: head.y - 1.5, width: 3, height: 3)), with: .color(.white.opacity(0.9)))
+    }
+
+    /// Smooth green → red by RAM pressure.
+    static func ramColor(_ r: Double) -> Color {
+        let x = min(max(r, 0), 100) / 100
+        return Color(hue: 0.33 * (1 - x), saturation: 0.75, brightness: 0.95)
     }
 }
 
