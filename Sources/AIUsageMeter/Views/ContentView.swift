@@ -1090,21 +1090,28 @@ struct LoadView: View {
 /// change). The size eases from the previous sample to the newest and is redrawn
 /// every display frame via TimelineView, with a gentle breathing + moving sheen,
 /// so it feels like a fluid, living volume at 60 fps.
-/// Continuously chases the latest sample with frame-rate-aware exponential
-/// smoothing (a critically-damped low-pass), so motion never restarts an ease
-/// curve or stalls between samples — it just flows.
+/// Moves toward the latest sample at a CONSTANT speed (a fixed %/second), so the
+/// rate of change feels uniform — no accelerate-near-far easing, no per-sample
+/// restart. It glides at the same pace whether the target is close or far, and
+/// simply holds once it arrives.
 final class LoadSmoother {
     var cpu = 0.0, gpu = 0.0, ram = 0.0
     private var lastTick: Date?
-    private let tau = 0.40   // seconds to ~63% of the way to a new target
+    private let speed = 42.0       // percent per second (constant) for CPU/GPU
+    private let ramSpeed = 30.0    // RAM color shifts a touch more slowly
 
     func advance(toCPU tc: Double, gpu tg: Double, ram tr: Double, now: Date) {
         let dt = lastTick.map { max(0, now.timeIntervalSince($0)) } ?? 0
         lastTick = now
-        let k = dt > 0 ? (1 - exp(-dt / tau)) : 0
-        cpu += (tc - cpu) * k
-        gpu += (tg - gpu) * k
-        ram += (tr - ram) * k
+        cpu = step(cpu, tc, speed * dt)
+        gpu = step(gpu, tg, speed * dt)
+        ram = step(ram, tr, ramSpeed * dt)
+    }
+
+    private func step(_ current: Double, _ target: Double, _ maxDelta: Double) -> Double {
+        let d = target - current
+        if abs(d) <= maxDelta { return target }
+        return current + (d < 0 ? -maxDelta : maxDelta)
     }
 }
 
@@ -1150,12 +1157,11 @@ struct LoadTrajectory: View {
             ctx.stroke(path, with: .color(Self.ramColor(p.ram).opacity(0.05 + frac * 0.10)), lineWidth: 1)
         }
 
-        // Continuously chase the latest sample (no per-second ease restart).
+        // Chase the latest sample at a constant speed (uniform rate of change).
         smoother.advance(toCPU: load.cpu, gpu: load.gpu, ram: load.ram, now: now)
         let phase = now.timeIntervalSinceReferenceDate
-        let breath = 1 + 0.012 * sin(phase * 1.6)   // subtle living motion
-        let cpu = smoother.cpu * breath
-        let gpu = smoother.gpu * breath
+        let cpu = smoother.cpu
+        let gpu = smoother.gpu
         let color = Self.ramColor(smoother.ram)
 
         let (body, rect) = rrect(cpu: cpu, gpu: gpu, radius: 11)
