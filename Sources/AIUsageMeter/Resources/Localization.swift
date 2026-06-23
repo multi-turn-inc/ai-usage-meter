@@ -718,6 +718,36 @@ class LocalizationManager {
         }
     }
 
+    var aiDiagnose: String {
+        switch currentLanguage {
+        case .english: return "Diagnose with AI"
+        case .korean: return "AI로 원인 진단"
+        case .japanese: return "AIで原因を診断"
+        case .chinese: return "用 AI 诊断原因"
+        case .spanish: return "Diagnosticar con IA"
+        case .french: return "Diagnostiquer avec l'IA"
+        case .german: return "Mit KI diagnostizieren"
+        case .portuguese: return "Diagnosticar com IA"
+        case .russian: return "Диагностика с ИИ"
+        case .italian: return "Diagnostica con l'IA"
+        }
+    }
+
+    var autoDiagnoseWhenHot: String {
+        switch currentLanguage {
+        case .english: return "Auto-diagnose when the Mac gets hot"
+        case .korean: return "뜨거워지면 자동으로 진단"
+        case .japanese: return "熱くなったら自動で診断"
+        case .chinese: return "变热时自动诊断"
+        case .spanish: return "Diagnosticar automáticamente cuando se caliente"
+        case .french: return "Diagnostiquer automatiquement en cas de surchauffe"
+        case .german: return "Bei Hitze automatisch diagnostizieren"
+        case .portuguese: return "Diagnosticar automaticamente quando esquentar"
+        case .russian: return "Автодиагностика при нагреве"
+        case .italian: return "Diagnostica automatica quando si surriscalda"
+        }
+    }
+
     var invalidAPIKey: String {
         switch currentLanguage {
         case .english: return "Invalid API key"

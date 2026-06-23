@@ -114,9 +114,18 @@ final class ThermalAdvisor {
         evaluate()
     }
 
-    /// Manual "diagnose now" — ignores cooldown but still requires opt-in + key.
+    /// Lightweight local refresh for the always-on summary strip: updates the
+    /// thermal state and top-CPU list with NO network/LLM call. Safe to call
+    /// while the panel is open.
+    func sampleNow() async {
+        thermalState = ProcessInfo.processInfo.thermalState
+        topProcesses = await Self.topCPUProcesses()
+    }
+
+    /// Manual "diagnose now" — explicit user action counts as consent, so it only
+    /// needs an API key (not the auto-when-hot opt-in). Ignores cooldown.
     func diagnoseNow() {
-        guard isEnabled, hasAPIKey, !isDiagnosing else { return }
+        guard hasAPIKey, !isDiagnosing else { return }
         Task { await diagnose() }
     }
 

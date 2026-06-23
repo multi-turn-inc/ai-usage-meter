@@ -258,6 +258,14 @@ struct MainPanel: View {
                         .spring(response: 0.5, dampingFraction: 0.75).delay(0.3),
                         value: appeared
                     )
+
+                HeatStrip()
+                    .opacity(appeared ? 1 : 0)
+                    .offset(y: appeared ? 0 : 16)
+                    .animation(
+                        .spring(response: 0.5, dampingFraction: 0.75).delay(0.36),
+                        value: appeared
+                    )
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 10)
@@ -600,14 +608,33 @@ struct SettingsPanel: View {
     @ViewBuilder
     private var thermalAdvisorCard: some View {
         let advisor = ThermalAdvisor.shared
+        // Config only — the live status + diagnosis live on the main panel's heat
+        // strip. Here the user sets the key (for AI diagnosis) and the auto-when-hot
+        // opt-in. The privacy note applies to AI calls; the strip itself is local.
         VStack(alignment: .leading, spacing: 10) {
-            // Opt-in toggle
+            VStack(alignment: .leading, spacing: 4) {
+                Text(L.anthropicKey)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    SecureField("sk-ant-...", text: $apiKeyDraft)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 11, design: .monospaced))
+                    Button(L.save) { advisor.setAPIKey(apiKeyDraft) }
+                        .font(.system(size: 11, weight: .medium))
+                        .buttonStyle(.glass)
+                        .disabled(apiKeyDraft.isEmpty)
+                }
+            }
+
+            Divider().opacity(0.2)
+
             Toggle(isOn: Binding(
                 get: { advisor.isEnabled },
                 set: { advisor.isEnabled = $0 }
             )) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(L.thermalAdvisorEnable)
+                    Text(L.autoDiagnoseWhenHot)
                         .font(.system(size: 13, weight: .medium))
                     Text(L.thermalAdvisorPrivacy)
                         .font(.system(size: 10))
@@ -617,93 +644,13 @@ struct SettingsPanel: View {
             }
             .toggleStyle(.switch)
             .tint(.accentColor)
-
-            if advisor.isEnabled {
-                Divider().opacity(0.2)
-
-                // API key field
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(L.anthropicKey)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.secondary)
-                    HStack(spacing: 6) {
-                        SecureField("sk-ant-...", text: $apiKeyDraft)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(size: 11, design: .monospaced))
-                        Button(L.save) { advisor.setAPIKey(apiKeyDraft) }
-                            .font(.system(size: 11, weight: .medium))
-                            .buttonStyle(.glass)
-                            .disabled(apiKeyDraft.isEmpty)
-                    }
-                }
-
-                // Status / result
-                if !advisor.hasAPIKey {
-                    Text(L.thermalAdvisorNeedsKey)
-                        .font(.system(size: 10))
-                        .foregroundStyle(.tertiary)
-                } else {
-                    Divider().opacity(0.2)
-                    HStack {
-                        Label(Self.thermalLabel(advisor.thermalState),
-                              systemImage: "thermometer.medium")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(advisor.thermalState == .nominal ? Color.secondary : Color.orange)
-                        Spacer()
-                        Button {
-                            advisor.diagnoseNow()
-                        } label: {
-                            if advisor.isDiagnosing {
-                                ProgressView().controlSize(.small)
-                            } else {
-                                Text(L.diagnoseNow).font(.system(size: 11, weight: .medium))
-                            }
-                        }
-                        .buttonStyle(.glass)
-                        .buttonBorderShape(.capsule)
-                        .disabled(advisor.isDiagnosing)
-                    }
-
-                    if let diagnosis = advisor.diagnosis {
-                        HStack(alignment: .top, spacing: 8) {
-                            Image(systemName: "sparkles")
-                                .font(.system(size: 12))
-                                .foregroundStyle(.orange)
-                            Text(diagnosis)
-                                .font(.system(size: 11))
-                                .foregroundStyle(.primary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        .padding(8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(Color.orange.opacity(0.08))
-                        )
-                    }
-                    if let err = advisor.lastError {
-                        Text(err)
-                            .font(.system(size: 10))
-                            .foregroundStyle(.red)
-                    }
-                }
-            }
+            .disabled(!advisor.hasAPIKey)
         }
         .padding(12)
         .premiumCard()
         .onAppear {
             // Seed once; don't clobber an unsaved edit on re-appear.
             if apiKeyDraft.isEmpty { apiKeyDraft = advisor.apiKey ?? "" }
-        }
-    }
-
-    private static func thermalLabel(_ state: ProcessInfo.ThermalState) -> String {
-        switch state {
-        case .nominal: return L.thermalNominal
-        case .fair: return L.thermalFair
-        case .serious: return L.thermalSerious
-        case .critical: return L.thermalCritical
-        @unknown default: return "—"
         }
     }
 
@@ -940,6 +887,139 @@ struct CircularGaugeView: View {
         if service.isAuthError { return 0 }
         let usage = service.sevenDayUsage ?? 0
         return max(0, (100.0 - usage)) / 100.0
+    }
+}
+
+/// Always-on system heat summary on the main panel. Simple one line (local, no
+/// API key); tap to expand top-CPU processes and an optional AI diagnosis.
+struct HeatStrip: View {
+    private var advisor = ThermalAdvisor.shared
+    @State private var expanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) { expanded.toggle() }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "thermometer.medium")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(heatColor)
+                    Text(summaryText)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.quaternary)
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                }
+            }
+            .buttonStyle(.plain)
+
+            if expanded {
+                if !advisor.topProcesses.isEmpty {
+                    VStack(spacing: 3) {
+                        ForEach(advisor.topProcesses) { p in
+                            HStack {
+                                Text(p.name)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                Spacer()
+                                Text("\(Int(p.cpu.rounded()))%")
+                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(p.cpu >= 50 ? Color.orange : Color.secondary)
+                            }
+                        }
+                    }
+
+                    Divider().opacity(0.2)
+
+                    if advisor.hasAPIKey {
+                        Button {
+                            advisor.diagnoseNow()
+                        } label: {
+                            HStack(spacing: 6) {
+                                if advisor.isDiagnosing {
+                                    ProgressView().controlSize(.small)
+                                } else {
+                                    Image(systemName: "sparkles").font(.system(size: 11))
+                                }
+                                Text(advisor.isDiagnosing ? L.updating : L.aiDiagnose)
+                                    .font(.system(size: 11, weight: .medium))
+                            }
+                        }
+                        .buttonStyle(.glass)
+                        .buttonBorderShape(.capsule)
+                        .disabled(advisor.isDiagnosing)
+
+                        if let diagnosis = advisor.diagnosis {
+                            HStack(alignment: .top, spacing: 8) {
+                                Image(systemName: "sparkles")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.orange)
+                                Text(diagnosis)
+                                    .font(.system(size: 11))
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(8)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(Color.orange.opacity(0.08))
+                            )
+                        }
+                        if let err = advisor.lastError {
+                            Text(err).font(.system(size: 10)).foregroundStyle(.red)
+                        }
+                    } else {
+                        Text(L.thermalAdvisorNeedsKey)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
+                    }
+                } else {
+                    Text("…").font(.system(size: 11)).foregroundStyle(.tertiary)
+                }
+            }
+        }
+        .padding(12)
+        .premiumCard()
+        .task {
+            // Refresh the local summary while the panel is open; auto-cancels on close.
+            while !Task.isCancelled {
+                await advisor.sampleNow()
+                try? await Task.sleep(nanoseconds: 6_000_000_000)
+            }
+        }
+    }
+
+    private var summaryText: String {
+        let label = Self.localizedThermal(advisor.thermalState)
+        if let top = advisor.topProcesses.first, top.cpu >= 10 {
+            return "\(label) · \(top.name) \(Int(top.cpu.rounded()))%"
+        }
+        return label
+    }
+
+    private var heatColor: Color {
+        switch advisor.thermalState {
+        case .nominal: return .secondary
+        case .fair: return .yellow
+        case .serious, .critical: return .orange
+        @unknown default: return .secondary
+        }
+    }
+
+    static func localizedThermal(_ state: ProcessInfo.ThermalState) -> String {
+        switch state {
+        case .nominal: return L.thermalNominal
+        case .fair: return L.thermalFair
+        case .serious: return L.thermalSerious
+        case .critical: return L.thermalCritical
+        @unknown default: return "—"
+        }
     }
 }
 
