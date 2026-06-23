@@ -195,14 +195,26 @@ final class ThermalAdvisor {
         let procList = processes.map { "\($0.name): \(String(format: "%.0f", $0.cpu))% CPU" }.joined(separator: "\n")
         let language = LocalizationManager.shared.currentLanguage.displayName
 
+        let hot = thermalState == .serious || thermalState == .critical
+        let situation = hot
+            ? "The Mac is running hot (thermal pressure: \(thermalLabel))."
+            : "The Mac's temperature is currently \(thermalLabel) (not overheating). The user is checking proactively."
+        let guidance = hot
+            ? "Name the most likely culprit and give ONE concrete, safe action — prefer quitting the specific app over `killall` or rebooting."
+            : "If nothing looks problematic, say so reassuringly in one sentence. Only flag a process if it's a sustained user app worth watching."
+
         let prompt = """
-        My Mac is running hot. macOS thermal pressure level: \(thermalLabel).
-        Top processes by CPU usage right now:
+        You are a macOS performance assistant. \(situation)
+        Top processes by CPU right now (a process briefly near 100% is normal):
         \(procList)
 
-        In \(language), in 2-3 short sentences: what is the most likely cause of the heat, \
-        and what concrete action should I take to cool it down? Name the specific process(es). \
-        Be direct and practical. Do not add a preamble.
+        Note: several macOS system processes spike briefly during indexing, ML-model \
+        compilation, photo analysis, or backup and then settle on their own — e.g. \
+        ANECompilerService, mediaanalysisd, photoanalysisd, mds / mds_stores / mdworker, \
+        spotlightknowledged, backupd, kernel_task, and *syncd helpers. For those, advise \
+        waiting a minute rather than force-quitting or rebooting.
+
+        Respond in \(language), 2-3 short sentences, no preamble. \(guidance)
         """
 
         var request = URLRequest(url: URL(string: "https://api.anthropic.com/v1/messages")!)
