@@ -44,6 +44,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         menuBarController = controller
 
+        // Make the heat advisor resident so it watches thermal state from launch
+        // (no-op unless the user opted in and set an API key).
+        ThermalAdvisor.shared.start()
+
         // Blog render mode: AIM_BLOG_RENDER=1 ./AIUsageMeter
         if isBlogRenderMode {
             Task { @MainActor in

@@ -718,6 +718,186 @@ class LocalizationManager {
         }
     }
 
+    var invalidAPIKey: String {
+        switch currentLanguage {
+        case .english: return "Invalid API key"
+        case .korean: return "API 키가 올바르지 않습니다"
+        case .japanese: return "APIキーが正しくありません"
+        case .chinese: return "API 密钥无效"
+        case .spanish: return "Clave API no válida"
+        case .french: return "Clé API non valide"
+        case .german: return "Ungültiger API-Schlüssel"
+        case .portuguese: return "Chave de API inválida"
+        case .russian: return "Неверный API-ключ"
+        case .italian: return "Chiave API non valida"
+        }
+    }
+
+    var save: String {
+        switch currentLanguage {
+        case .english: return "Save"
+        case .korean: return "저장"
+        case .japanese: return "保存"
+        case .chinese: return "保存"
+        case .spanish: return "Guardar"
+        case .french: return "Enregistrer"
+        case .german: return "Speichern"
+        case .portuguese: return "Salvar"
+        case .russian: return "Сохранить"
+        case .italian: return "Salva"
+        }
+    }
+
+    var thermalAdvisor: String {
+        switch currentLanguage {
+        case .english: return "Heat Advisor"
+        case .korean: return "발열 어드바이저"
+        case .japanese: return "発熱アドバイザー"
+        case .chinese: return "发热顾问"
+        case .spanish: return "Asesor de calor"
+        case .french: return "Conseiller thermique"
+        case .german: return "Wärme-Berater"
+        case .portuguese: return "Consultor de calor"
+        case .russian: return "Тепловой советник"
+        case .italian: return "Consulente termico"
+        }
+    }
+
+    var thermalAdvisorEnable: String {
+        switch currentLanguage {
+        case .english: return "Diagnose overheating with AI"
+        case .korean: return "AI로 발열 원인 진단"
+        case .japanese: return "AIで発熱の原因を診断"
+        case .chinese: return "用 AI 诊断过热原因"
+        case .spanish: return "Diagnosticar el sobrecalentamiento con IA"
+        case .french: return "Diagnostiquer la surchauffe avec l'IA"
+        case .german: return "Überhitzung mit KI diagnostizieren"
+        case .portuguese: return "Diagnosticar superaquecimento com IA"
+        case .russian: return "Диагностика перегрева с помощью ИИ"
+        case .italian: return "Diagnostica il surriscaldamento con l'IA"
+        }
+    }
+
+    var thermalAdvisorPrivacy: String {
+        switch currentLanguage {
+        case .english: return "When the Mac gets hot, sends the names of top-CPU processes to Anthropic for a diagnosis. Uses your API key."
+        case .korean: return "맥이 뜨거워지면 CPU 상위 프로세스 이름을 Anthropic에 보내 진단합니다. 본인 API 키를 사용합니다."
+        case .japanese: return "Macが熱くなると、CPU上位プロセス名をAnthropicに送信して診断します。ご自身のAPIキーを使用します。"
+        case .chinese: return "当 Mac 变热时，将占用 CPU 最多的进程名称发送给 Anthropic 进行诊断。使用您的 API 密钥。"
+        case .spanish: return "Cuando el Mac se calienta, envía los nombres de los procesos con más CPU a Anthropic para un diagnóstico. Usa tu clave API."
+        case .french: return "Quand le Mac chauffe, envoie les noms des processus les plus gourmands en CPU à Anthropic pour un diagnostic. Utilise votre clé API."
+        case .german: return "Wenn der Mac heiß wird, werden die Namen der CPU-intensivsten Prozesse zur Diagnose an Anthropic gesendet. Nutzt deinen API-Schlüssel."
+        case .portuguese: return "Quando o Mac esquenta, envia os nomes dos processos com mais CPU para a Anthropic para diagnóstico. Usa sua chave de API."
+        case .russian: return "Когда Mac нагревается, отправляет имена процессов с наибольшей нагрузкой на CPU в Anthropic для диагностики. Использует ваш API-ключ."
+        case .italian: return "Quando il Mac si surriscalda, invia i nomi dei processi che usano più CPU ad Anthropic per una diagnosi. Usa la tua chiave API."
+        }
+    }
+
+    var anthropicKey: String {
+        switch currentLanguage {
+        case .english: return "Anthropic API key"
+        case .korean: return "Anthropic API 키"
+        case .japanese: return "Anthropic APIキー"
+        case .chinese: return "Anthropic API 密钥"
+        case .spanish: return "Clave API de Anthropic"
+        case .french: return "Clé API Anthropic"
+        case .german: return "Anthropic API-Schlüssel"
+        case .portuguese: return "Chave de API da Anthropic"
+        case .russian: return "API-ключ Anthropic"
+        case .italian: return "Chiave API Anthropic"
+        }
+    }
+
+    var thermalAdvisorNeedsKey: String {
+        switch currentLanguage {
+        case .english: return "Enter an API key to enable diagnosis."
+        case .korean: return "진단을 사용하려면 API 키를 입력하세요."
+        case .japanese: return "診断を有効にするにはAPIキーを入力してください。"
+        case .chinese: return "请输入 API 密钥以启用诊断。"
+        case .spanish: return "Introduce una clave API para activar el diagnóstico."
+        case .french: return "Saisissez une clé API pour activer le diagnostic."
+        case .german: return "Gib einen API-Schlüssel ein, um die Diagnose zu aktivieren."
+        case .portuguese: return "Insira uma chave de API para ativar o diagnóstico."
+        case .russian: return "Введите API-ключ, чтобы включить диагностику."
+        case .italian: return "Inserisci una chiave API per attivare la diagnosi."
+        }
+    }
+
+    var diagnoseNow: String {
+        switch currentLanguage {
+        case .english: return "Diagnose now"
+        case .korean: return "지금 진단"
+        case .japanese: return "今すぐ診断"
+        case .chinese: return "立即诊断"
+        case .spanish: return "Diagnosticar ahora"
+        case .french: return "Diagnostiquer"
+        case .german: return "Jetzt diagnostizieren"
+        case .portuguese: return "Diagnosticar agora"
+        case .russian: return "Диагностировать"
+        case .italian: return "Diagnostica ora"
+        }
+    }
+
+    var thermalNominal: String {
+        switch currentLanguage {
+        case .english: return "Normal"
+        case .korean: return "정상"
+        case .japanese: return "正常"
+        case .chinese: return "正常"
+        case .spanish: return "Normal"
+        case .french: return "Normal"
+        case .german: return "Normal"
+        case .portuguese: return "Normal"
+        case .russian: return "Норма"
+        case .italian: return "Normale"
+        }
+    }
+
+    var thermalFair: String {
+        switch currentLanguage {
+        case .english: return "Warm"
+        case .korean: return "약간 따뜻함"
+        case .japanese: return "やや高温"
+        case .chinese: return "偏热"
+        case .spanish: return "Templado"
+        case .french: return "Tiède"
+        case .german: return "Warm"
+        case .portuguese: return "Morno"
+        case .russian: return "Тёплый"
+        case .italian: return "Tiepido"
+        }
+    }
+
+    var thermalSerious: String {
+        switch currentLanguage {
+        case .english: return "Hot"
+        case .korean: return "뜨거움"
+        case .japanese: return "高温"
+        case .chinese: return "过热"
+        case .spanish: return "Caliente"
+        case .french: return "Chaud"
+        case .german: return "Heiß"
+        case .portuguese: return "Quente"
+        case .russian: return "Горячо"
+        case .italian: return "Caldo"
+        }
+    }
+
+    var thermalCritical: String {
+        switch currentLanguage {
+        case .english: return "Critical"
+        case .korean: return "매우 뜨거움"
+        case .japanese: return "危険な高温"
+        case .chinese: return "严重过热"
+        case .spanish: return "Crítico"
+        case .french: return "Critique"
+        case .german: return "Kritisch"
+        case .portuguese: return "Crítico"
+        case .russian: return "Критично"
+        case .italian: return "Critico"
+        }
+    }
+
     var includeDiagnostics: String {
         switch currentLanguage {
         case .english: return "Include diagnostics"

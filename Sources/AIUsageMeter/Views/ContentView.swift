@@ -329,6 +329,7 @@ struct SettingsPanel: View {
 
     @State private var appeared = false
     @State private var showBugReport = false
+    @State private var apiKeyDraft: String = ""
 
     var body: some View {
         if showBugReport {
@@ -508,29 +509,29 @@ struct SettingsPanel: View {
                             if Updater.shared.updateAvailable, let latest = Updater.shared.latestVersion {
                                 Divider().opacity(0.2)
                                 Button {
-                                    Updater.shared.checkForUpdates()
+                                    Updater.shared.installUpdate()
                                 } label: {
-                                    HStack(spacing: 10) {
-                                        Image(systemName: "arrow.down.circle.fill")
-                                            .font(.system(size: 18))
-                                            .foregroundStyle(.green)
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text("\(L.newVersion) v\(latest)")
-                                                .font(.system(size: 13, weight: .semibold))
-                                                .foregroundStyle(.primary)
-                                            Text(Updater.shared.isUpdating ? L.updating : L.updateNow)
-                                                .font(.system(size: 10))
-                                                .foregroundStyle(.secondary)
-                                        }
-                                        Spacer()
+                                    HStack(spacing: 8) {
                                         if Updater.shared.isUpdating {
-                                            ProgressView().controlSize(.small)
+                                            ProgressView().controlSize(.small).tint(.white)
                                         } else {
-                                            Image(systemName: "chevron.right")
-                                                .font(.system(size: 10, weight: .semibold))
-                                                .foregroundStyle(.quaternary)
+                                            Image(systemName: "arrow.down.circle.fill")
+                                                .font(.system(size: 16, weight: .semibold))
                                         }
+                                        Text(Updater.shared.isUpdating
+                                             ? L.updating
+                                             : "\(L.updateNow) · v\(latest)")
+                                            .font(.system(size: 13, weight: .semibold))
+                                        Spacer()
                                     }
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 9)
+                                    .frame(maxWidth: .infinity)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                            .fill(Color.accentColor)
+                                    )
                                 }
                                 .buttonStyle(.plain)
                                 .disabled(Updater.shared.isUpdating)
@@ -538,6 +539,11 @@ struct SettingsPanel: View {
                         }
                         .padding(10)
                         .premiumCard()
+                    }
+
+                    // MARK: - Thermal Advisor
+                    settingsSection(title: L.thermalAdvisor, delay: 0.15) {
+                        thermalAdvisorCard
                     }
 
                     // MARK: - Support
@@ -587,6 +593,118 @@ struct SettingsPanel: View {
         }
         .onDisappear { appeared = false }
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: showBugReport)
+    }
+
+    // MARK: - Thermal Advisor
+
+    @ViewBuilder
+    private var thermalAdvisorCard: some View {
+        let advisor = ThermalAdvisor.shared
+        VStack(alignment: .leading, spacing: 10) {
+            // Opt-in toggle
+            Toggle(isOn: Binding(
+                get: { advisor.isEnabled },
+                set: { advisor.isEnabled = $0 }
+            )) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(L.thermalAdvisorEnable)
+                        .font(.system(size: 13, weight: .medium))
+                    Text(L.thermalAdvisorPrivacy)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .toggleStyle(.switch)
+            .tint(.accentColor)
+
+            if advisor.isEnabled {
+                Divider().opacity(0.2)
+
+                // API key field
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(L.anthropicKey)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    HStack(spacing: 6) {
+                        SecureField("sk-ant-...", text: $apiKeyDraft)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 11, design: .monospaced))
+                        Button(L.save) { advisor.setAPIKey(apiKeyDraft) }
+                            .font(.system(size: 11, weight: .medium))
+                            .buttonStyle(.glass)
+                            .disabled(apiKeyDraft.isEmpty)
+                    }
+                }
+
+                // Status / result
+                if !advisor.hasAPIKey {
+                    Text(L.thermalAdvisorNeedsKey)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                } else {
+                    Divider().opacity(0.2)
+                    HStack {
+                        Label(Self.thermalLabel(advisor.thermalState),
+                              systemImage: "thermometer.medium")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(advisor.thermalState == .nominal ? Color.secondary : Color.orange)
+                        Spacer()
+                        Button {
+                            advisor.diagnoseNow()
+                        } label: {
+                            if advisor.isDiagnosing {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                Text(L.diagnoseNow).font(.system(size: 11, weight: .medium))
+                            }
+                        }
+                        .buttonStyle(.glass)
+                        .buttonBorderShape(.capsule)
+                        .disabled(advisor.isDiagnosing)
+                    }
+
+                    if let diagnosis = advisor.diagnosis {
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.orange)
+                            Text(diagnosis)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.primary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(Color.orange.opacity(0.08))
+                        )
+                    }
+                    if let err = advisor.lastError {
+                        Text(err)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.red)
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .premiumCard()
+        .onAppear {
+            // Seed once; don't clobber an unsaved edit on re-appear.
+            if apiKeyDraft.isEmpty { apiKeyDraft = advisor.apiKey ?? "" }
+        }
+    }
+
+    private static func thermalLabel(_ state: ProcessInfo.ThermalState) -> String {
+        switch state {
+        case .nominal: return L.thermalNominal
+        case .fair: return L.thermalFair
+        case .serious: return L.thermalSerious
+        case .critical: return L.thermalCritical
+        @unknown default: return "—"
+        }
     }
 
     // MARK: - Settings Helpers

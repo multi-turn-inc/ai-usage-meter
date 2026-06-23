@@ -60,7 +60,7 @@ class Updater {
     // keep in sync with the released version or settings shows a phantom update.
     static let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
         ?? (Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String)
-        ?? "4.3.4"
+        ?? "4.3.5"
 
     private var currentVersion: String { Self.appVersion }
 
@@ -129,6 +129,15 @@ class Updater {
             return
         }
 
+        // Pin the download to GitHub's hosts — the URL comes from a parsed API
+        // response, and this binary is launched with quarantine cleared, so don't
+        // fetch executable code from anywhere else.
+        guard let host = url.host?.lowercased(),
+              host == "github.com" || host.hasSuffix(".githubusercontent.com") else {
+            openURL("https://github.com/\(githubRepo)/releases/latest")
+            return
+        }
+
         isUpdating = true
         defer { isUpdating = false }
 
@@ -137,9 +146,22 @@ class Updater {
             let installDir = FileManager.default.homeDirectoryForCurrentUser
                 .appendingPathComponent("Library/Application Support/TokenBurn")
 
-            // Mount DMG, extract binary
-            let mountPoint = "/tmp/TokenBurnUpdate"
-            try? FileManager.default.removeItem(atPath: mountPoint)
+            // Verify the downloaded DMG is notarized + signed by our Developer ID
+            // BEFORE mounting/executing anything from it. The custom updater clears
+            // quarantine and ad-hoc re-signs, so Gatekeeper won't get a second
+            // chance — this is the only integrity gate.
+            guard Self.isNotarizedAndTrusted(dmgPath: tempURL.path) else {
+                self.error = "Update failed verification"
+                openURL(urlString)
+                return
+            }
+
+            // Mount DMG under a fresh per-invocation dir in the user's own temp
+            // location (not the world-writable /tmp), so a local process can't
+            // pre-plant the mountpoint.
+            let mountPoint = (NSTemporaryDirectory() as NSString)
+                .appendingPathComponent("TokenBurnUpdate-\(UUID().uuidString)")
+            try? FileManager.default.createDirectory(atPath: mountPoint, withIntermediateDirectories: true)
 
             let mount = Process()
             mount.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
@@ -163,19 +185,43 @@ class Updater {
 
             // Find the binary inside the .app in the DMG
             let appName = "Token Burn.app"
-            let binaryPath = "\(mountPoint)/\(appName)/Contents/MacOS/AIUsageMeter"
+            let appPath = "\(mountPoint)/\(appName)"
+            let binaryPath = "\(appPath)/Contents/MacOS/AIUsageMeter"
 
             guard FileManager.default.fileExists(atPath: binaryPath) else {
                 openURL(urlString)
                 return
             }
 
-            // Replace binary
+            // Pin the team: the mounted app must satisfy a Developer-ID requirement
+            // for OUR team before we copy + run its binary.
+            guard Self.satisfiesTeamRequirement(path: appPath) else {
+                self.error = "Update failed verification"
+                openURL(urlString)
+                return
+            }
+
+            // Replace binary, backing up the current one so a failure can roll back
+            // instead of leaving the LaunchAgent pointing at a missing/broken binary.
+            let fm = FileManager.default
             let destPath = installDir.appendingPathComponent("AIUsageMeter").path
             let backupPath = destPath + ".bak"
-            try? FileManager.default.removeItem(atPath: backupPath)
-            try? FileManager.default.moveItem(atPath: destPath, toPath: backupPath)
-            try FileManager.default.copyItem(atPath: binaryPath, toPath: destPath)
+            try? fm.removeItem(atPath: backupPath)
+            try? fm.moveItem(atPath: destPath, toPath: backupPath)
+
+            func restoreBackup() {
+                try? fm.removeItem(atPath: destPath)
+                try? fm.moveItem(atPath: backupPath, toPath: destPath)
+            }
+
+            do {
+                try fm.copyItem(atPath: binaryPath, toPath: destPath)
+            } catch {
+                restoreBackup()  // copy failed → put the working binary back
+                self.error = "Update failed; reverted"
+                openURL(urlString)
+                return
+            }
 
             // Copy Sparkle framework too
             let sparkleSource = "\(mountPoint)/\(appName)/Contents/Frameworks/Sparkle.framework"
@@ -187,7 +233,13 @@ class Updater {
 
             // The copied binary still carries the DMG bundle's signature, which seals that
             // bundle's Info.plist — launchd would SIGKILL it. Re-sign ad-hoc to make it runnable.
-            LaunchAgentRedirect.makeStandaloneRunnable()
+            // If re-signing fails, the new binary won't launch — roll back to the backup.
+            guard LaunchAgentRedirect.makeStandaloneRunnable() else {
+                restoreBackup()
+                self.error = "Update failed; reverted"
+                openURL(urlString)
+                return
+            }
 
             // Clean up backup
             try? FileManager.default.removeItem(atPath: backupPath)
@@ -209,6 +261,60 @@ class Updater {
         } catch {
             self.error = error.localizedDescription
             openURL(urlString)
+        }
+    }
+
+    /// One-click install for the "Update available" button: re-fetch the latest
+    /// release metadata, then download + verify + apply.
+    func installUpdate() {
+        guard !isUpdating else { return }
+        Task { await fetchAndInstallLatest() }
+    }
+
+    private func fetchAndInstallLatest() async {
+        let url = URL(string: "https://api.github.com/repos/\(githubRepo)/releases/latest")!
+        var request = URLRequest(url: url)
+        request.setValue("application/vnd.github.v3+json", forHTTPHeaderField: "Accept")
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              let http = response as? HTTPURLResponse, http.statusCode == 200,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let tagName = json["tag_name"] as? String else {
+            error = "Failed to check for updates"
+            return
+        }
+        let latest = tagName.hasPrefix("v") ? String(tagName.dropFirst()) : tagName
+        await downloadAndApply(from: json, version: latest)
+    }
+
+    /// `spctl --assess --type install` confirms Apple-notarized Developer ID.
+    private static func isNotarizedAndTrusted(dmgPath: String) -> Bool {
+        let (status, stderr) = runTool("/usr/sbin/spctl",
+            ["--assess", "--type", "install", "--context", "context:primary-signature", "-v", dmgPath])
+        guard status == 0 else { return false }
+        return stderr.contains("source=Notarized Developer ID")
+    }
+
+    /// codesign with an explicit Developer-ID + team requirement.
+    private static func satisfiesTeamRequirement(path: String) -> Bool {
+        let requirement = "anchor apple generic and certificate leaf[subject.OU] = \"8V3Z27Z6RY\""
+        let (status, _) = runTool("/usr/bin/codesign", ["--verify", "--strict", "-R=\(requirement)", path])
+        return status == 0
+    }
+
+    private static func runTool(_ path: String, _ args: [String]) -> (status: Int32, stderr: String) {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: path)
+        task.arguments = args
+        let err = Pipe()
+        task.standardError = err
+        task.standardOutput = FileHandle.nullDevice
+        do {
+            try task.run()
+            let data = err.fileHandleForReading.readDataToEndOfFile()
+            task.waitUntilExit()
+            return (task.terminationStatus, String(data: data, encoding: .utf8) ?? "")
+        } catch {
+            return (-1, "")
         }
     }
 
