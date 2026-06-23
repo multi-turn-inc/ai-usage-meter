@@ -175,8 +175,10 @@ struct MainPanel: View {
 
     @State private var appeared = false
     @State private var showLegendHelp = false
-    @State private var tab: PanelTab = .usage
 
+    // Which view to show is driven by which menu-bar cell was clicked
+    // (appState.panelTab), not an in-panel switcher.
+    private var tab: PanelTab { loadTabEnabled ? appState.panelTab : .usage }
     private var loadTabEnabled: Bool { AppDefaults.userDefaults.object(forKey: "loadTabEnabled") as? Bool ?? true }
 
     var body: some View {
@@ -223,17 +225,6 @@ struct MainPanel: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
-
-            if loadTabEnabled {
-                Picker("", selection: $tab) {
-                    Text(L.tabUsage).tag(PanelTab.usage)
-                    Text(L.tabLoad).tag(PanelTab.load)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .padding(.horizontal, 16)
-                .padding(.bottom, 6)
-            }
 
             if tab == .load && loadTabEnabled {
                 LoadView()

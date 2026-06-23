@@ -14,6 +14,8 @@ class AppState {
     var activityDetectionEnabled: Bool = false
     var showMenuBarLegendOnboarding: Bool = false
     var tokenUsage: TokenUsageSummary = .empty
+    /// Which panel view to show, set by which menu-bar cell the user clicked.
+    var panelTab: PanelTab = .usage
 
     private var refreshTimer: Timer?
     private var refreshInterval: TimeInterval = 300

@@ -167,15 +167,39 @@ final class MenuBarPanelController: NSObject, NSWindowDelegate {
     }
 
     private func didPressStatusBarButton(_ sender: NSStatusBarButton) {
+        let clickedTab = tabForClick(on: sender)
+
         if window.isVisible {
-            dismissWindow()
+            // Clicking a different cell switches the view; same cell dismisses.
+            if clickedTab != appState.panelTab {
+                appState.panelTab = clickedTab
+            } else {
+                dismissWindow()
+            }
             return
         }
 
+        appState.panelTab = clickedTab
         setWindowPosition()
 
         DistributedNotificationCenter.default().post(name: .beginMenuTracking, object: nil)
         window.makeKeyAndOrderFront(nil)
+    }
+
+    /// Maps the click's horizontal position within the status item to a cell:
+    /// the last cell is the Load meter (when enabled), the rest are services.
+    private func tabForClick(on button: NSStatusBarButton) -> PanelTab {
+        let loadEnabled = AppDefaults.userDefaults.object(forKey: "loadTabEnabled") as? Bool ?? true
+        guard loadEnabled else { return .usage }
+
+        let serviceCount = appState.services.filter { $0.config.isEnabled }.count
+        let cellCount = serviceCount + 1   // + Load cell
+        guard cellCount > 1, let win = button.window else { return .usage }
+
+        let fraction = (NSEvent.mouseLocation.x - win.frame.minX) / max(win.frame.width, 1)
+        let index = Int(fraction * CGFloat(cellCount))
+        // Load is the last cell.
+        return index >= cellCount - 1 ? .load : .usage
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
