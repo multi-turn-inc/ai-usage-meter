@@ -1097,8 +1097,9 @@ struct LoadView: View {
 final class LoadSmoother {
     var cpu = 0.0, gpu = 0.0, ram = 0.0
     private var lastTick: Date?
-    private let speed = 42.0       // percent per second (constant) for CPU/GPU
-    private let ramSpeed = 30.0    // RAM color shifts a touch more slowly
+    private let speed = 18.0       // percent per second (constant) for CPU/GPU —
+                                   // low enough that it's always gliding, not snap-and-stop
+    private let ramSpeed = 14.0    // RAM color shifts a touch more slowly
 
     func advance(toCPU tc: Double, gpu tg: Double, ram tr: Double, now: Date) {
         let dt = lastTick.map { max(0, now.timeIntervalSince($0)) } ?? 0
@@ -1140,37 +1141,54 @@ struct LoadTrajectory: View {
         let hist = load.history
         guard !hist.isEmpty else { return }
 
-        func rrect(cpu: Double, gpu: Double, radius: CGFloat) -> (Path, CGRect) {
-            let w = max(10, CGFloat(min(max(cpu, 0), 100) / 100) * size.width)
-            let h = max(10, CGFloat(min(max(gpu, 0), 100) / 100) * size.height)
-            let rect = CGRect(x: 0, y: size.height - h, width: w, height: h)
-            return (Path(roundedRect: rect, cornerRadius: radius), rect)
-        }
-
-        // Ghost trail of past sizes (the trajectory of the size change).
-        let n = hist.count
-        let step = max(1, n / 12)
-        for i in stride(from: 0, to: n - 1, by: step) {
-            let p = hist[i]
-            let frac = Double(i) / Double(max(n - 1, 1))   // 0 oldest → 1 newest
-            let (path, _) = rrect(cpu: p.cpu, gpu: p.gpu, radius: 8)
-            ctx.stroke(path, with: .color(Self.ramColor(p.ram).opacity(0.05 + frac * 0.10)), lineWidth: 1)
-        }
-
-        // Chase the latest sample at a constant speed (uniform rate of change).
+        // Chase the latest sample at a constant (low) speed — always gliding,
+        // never snapping then stalling, so the rate of change feels uniform.
         smoother.advance(toCPU: load.cpu, gpu: load.gpu, ram: load.ram, now: now)
         let phase = now.timeIntervalSinceReferenceDate
         let cpu = smoother.cpu
         let gpu = smoother.gpu
         let color = Self.ramColor(smoother.ram)
 
-        let (body, rect) = rrect(cpu: cpu, gpu: gpu, radius: 11)
+        // The (CPU, GPU) point = the volume's top-right corner.
+        func corner(_ c: Double, _ g: Double) -> CGPoint {
+            CGPoint(x: CGFloat(min(max(c, 0), 100) / 100) * size.width,
+                    y: size.height - CGFloat(min(max(g, 0), 100) / 100) * size.height)
+        }
+
+        // ---- Trajectory: a soft fading comet of where the corner has been ----
+        var trail = hist.suffix(22).map { corner($0.cpu, $0.gpu) }
+        trail.append(corner(cpu, gpu))   // join smoothly to the current corner
+        if trail.count >= 2 {
+            // blurred glow underlay
+            ctx.drawLayer { layer in
+                layer.addFilter(.blur(radius: 5))
+                for i in 1..<trail.count {
+                    let frac = Double(i) / Double(trail.count - 1)
+                    var s = Path(); s.move(to: trail[i - 1]); s.addLine(to: trail[i])
+                    layer.stroke(s, with: .color(color.opacity(pow(frac, 1.5) * 0.45)),
+                                 style: StrokeStyle(lineWidth: 2 + frac * 2.5, lineCap: .round, lineJoin: .round))
+                }
+            }
+            // crisp tapered line on top
+            for i in 1..<trail.count {
+                let frac = Double(i) / Double(trail.count - 1)
+                var s = Path(); s.move(to: trail[i - 1]); s.addLine(to: trail[i])
+                ctx.stroke(s, with: .color(color.opacity(pow(frac, 1.8) * 0.8)),
+                           style: StrokeStyle(lineWidth: 0.75 + frac * 1.75, lineCap: .round, lineJoin: .round))
+            }
+        }
+
+        // ---- Glass volume ----
+        let w = max(10, CGFloat(min(max(cpu, 0), 100) / 100) * size.width)
+        let h = max(10, CGFloat(min(max(gpu, 0), 100) / 100) * size.height)
+        let rect = CGRect(x: 0, y: size.height - h, width: w, height: h)
+        let body = Path(roundedRect: rect, cornerRadius: 11)
 
         // Soft outer glow for depth.
         ctx.drawLayer { layer in
             layer.addFilter(.blur(radius: 12))
             layer.fill(Path(roundedRect: rect.insetBy(dx: -1, dy: -1), cornerRadius: 12),
-                       with: .color(color.opacity(0.45)))
+                       with: .color(color.opacity(0.40)))
         }
 
         // Translucent 3D body: lighter top → deeper bottom.
@@ -1197,6 +1215,11 @@ struct LoadTrajectory: View {
             Gradient(colors: [.white.opacity(0.55), .white.opacity(0.12)]),
             startPoint: CGPoint(x: rect.midX, y: rect.minY),
             endPoint: CGPoint(x: rect.midX, y: rect.maxY)), lineWidth: 1)
+
+        // Bright head where the trail meets the volume's corner.
+        let head = CGPoint(x: rect.maxX, y: rect.minY)
+        ctx.fill(Path(ellipseIn: CGRect(x: head.x - 7, y: head.y - 7, width: 14, height: 14)), with: .color(color.opacity(0.28)))
+        ctx.fill(Path(ellipseIn: CGRect(x: head.x - 2.5, y: head.y - 2.5, width: 5, height: 5)), with: .color(.white.opacity(0.95)))
     }
 
     /// Smooth green → red by RAM pressure.
