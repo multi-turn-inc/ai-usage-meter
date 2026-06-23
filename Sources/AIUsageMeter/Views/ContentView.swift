@@ -1084,10 +1084,12 @@ struct LoadView: View {
     }
 }
 
-/// The 2-axis load trail: x = CPU, y = GPU (from the bottom), drawn as a fading
-/// comet whose color is RAM pressure. The head eases from the previous sample to
-/// the newest over one interval, redrawn every display frame via TimelineView so
-/// it glides smoothly at 60 fps even though samples land once a second.
+/// The load gauge: a translucent, glassy 3D rounded rectangle that grows from the
+/// bottom-left — width = CPU, height = GPU — with its fill color = RAM pressure.
+/// Faint outlines of recent sizes linger behind it (the trajectory of the size
+/// change). The size eases from the previous sample to the newest and is redrawn
+/// every display frame via TimelineView, with a gentle breathing + moving sheen,
+/// so it feels like a fluid, living volume at 60 fps.
 struct LoadTrajectory: View {
     var load: SystemLoadMonitor
     private let interval: Double = 1.0
@@ -1102,7 +1104,7 @@ struct LoadTrajectory: View {
 
     private func draw(_ ctx: GraphicsContext, _ size: CGSize, now: Date) {
         // faint grid
-        let grid = Color.gray.opacity(0.12)
+        let grid = Color.gray.opacity(0.10)
         for f in [0.25, 0.5, 0.75] {
             var v = Path(); v.move(to: CGPoint(x: size.width * f, y: 0)); v.addLine(to: CGPoint(x: size.width * f, y: size.height))
             ctx.stroke(v, with: .color(grid), lineWidth: 0.5)
@@ -1113,45 +1115,68 @@ struct LoadTrajectory: View {
         let hist = load.history
         guard !hist.isEmpty else { return }
 
-        func map(_ cpu: Double, _ gpu: Double) -> CGPoint {
-            CGPoint(x: CGFloat(min(max(cpu, 0), 100) / 100) * size.width,
-                    y: size.height - CGFloat(min(max(gpu, 0), 100) / 100) * size.height)
+        func rrect(cpu: Double, gpu: Double, radius: CGFloat) -> (Path, CGRect) {
+            let w = max(10, CGFloat(min(max(cpu, 0), 100) / 100) * size.width)
+            let h = max(10, CGFloat(min(max(gpu, 0), 100) / 100) * size.height)
+            let rect = CGRect(x: 0, y: size.height - h, width: w, height: h)
+            return (Path(roundedRect: rect, cornerRadius: radius), rect)
         }
 
-        // Ease the head from the previous sample toward the newest over `interval`.
-        let last = hist[hist.count - 1]
-        let prev = hist.count >= 2 ? hist[hist.count - 2] : last
+        // Ghost trail of past sizes (the trajectory of the size change).
+        let n = hist.count
+        let step = max(1, n / 12)
+        for i in stride(from: 0, to: n - 1, by: step) {
+            let p = hist[i]
+            let frac = Double(i) / Double(max(n - 1, 1))   // 0 oldest → 1 newest
+            let (path, _) = rrect(cpu: p.cpu, gpu: p.gpu, radius: 8)
+            ctx.stroke(path, with: .color(Self.ramColor(p.ram).opacity(0.05 + frac * 0.10)), lineWidth: 1)
+        }
+
+        // Eased current size + color (glides over one interval).
+        let last = hist[n - 1]
+        let prev = n >= 2 ? hist[n - 2] : last
         let t = min(1, max(0, now.timeIntervalSince(load.lastSampleAt) / interval))
         let te = 1 - pow(1 - t, 3)   // easeOutCubic
-        let headCPU = prev.cpu + (last.cpu - prev.cpu) * te
-        let headGPU = prev.gpu + (last.gpu - prev.gpu) * te
-        let headRAM = prev.ram + (last.ram - prev.ram) * te
-        let color = Self.ramColor(headRAM)
+        let phase = now.timeIntervalSinceReferenceDate
+        let breath = 1 + 0.012 * sin(phase * 1.6)   // subtle living motion
+        let cpu = (prev.cpu + (last.cpu - prev.cpu) * te) * breath
+        let gpu = (prev.gpu + (last.gpu - prev.gpu) * te) * breath
+        let ram = prev.ram + (last.ram - prev.ram) * te
+        let color = Self.ramColor(ram)
 
-        // History points, with the newest replaced by the eased head.
-        var pts: [CGPoint] = []
-        if hist.count >= 2 {
-            for i in 0..<(hist.count - 1) { pts.append(map(hist[i].cpu, hist[i].gpu)) }
-        }
-        pts.append(map(headCPU, headGPU))
+        let (body, rect) = rrect(cpu: cpu, gpu: gpu, radius: 11)
 
-        // Fading comet: older segments thinner + more transparent.
-        if pts.count >= 2 {
-            for i in 1..<pts.count {
-                let frac = Double(i) / Double(pts.count - 1)   // 0 oldest → 1 newest
-                let op = pow(frac, 1.6)
-                let w = 1.0 + frac * 3.5
-                var seg = Path(); seg.move(to: pts[i - 1]); seg.addLine(to: pts[i])
-                ctx.stroke(seg, with: .color(color.opacity(op)),
-                           style: StrokeStyle(lineWidth: w, lineCap: .round, lineJoin: .round))
-            }
+        // Soft outer glow for depth.
+        ctx.drawLayer { layer in
+            layer.addFilter(.blur(radius: 12))
+            layer.fill(Path(roundedRect: rect.insetBy(dx: -1, dy: -1), cornerRadius: 12),
+                       with: .color(color.opacity(0.45)))
         }
 
-        // Glowing head.
-        let head = pts[pts.count - 1]
-        ctx.fill(Path(ellipseIn: CGRect(x: head.x - 8, y: head.y - 8, width: 16, height: 16)), with: .color(color.opacity(0.22)))
-        ctx.fill(Path(ellipseIn: CGRect(x: head.x - 4, y: head.y - 4, width: 8, height: 8)), with: .color(color))
-        ctx.fill(Path(ellipseIn: CGRect(x: head.x - 1.5, y: head.y - 1.5, width: 3, height: 3)), with: .color(.white.opacity(0.9)))
+        // Translucent 3D body: lighter top → deeper bottom.
+        ctx.fill(body, with: .linearGradient(
+            Gradient(colors: [color.opacity(0.72), color.opacity(0.40)]),
+            startPoint: CGPoint(x: rect.midX, y: rect.minY),
+            endPoint: CGPoint(x: rect.midX, y: rect.maxY)))
+
+        // Glass sheen on the upper portion, gently sliding for a fluid feel.
+        ctx.drawLayer { layer in
+            layer.clip(to: body)
+            let shift = CGFloat(sin(phase * 0.7)) * rect.width * 0.12
+            let sheen = CGRect(x: rect.minX - rect.width * 0.2 + shift, y: rect.minY,
+                               width: rect.width * 0.7, height: max(8, rect.height * 0.5))
+            layer.fill(Path(roundedRect: sheen, cornerRadius: 10),
+                       with: .linearGradient(
+                        Gradient(colors: [.white.opacity(0.0), .white.opacity(0.30), .white.opacity(0.0)]),
+                        startPoint: CGPoint(x: sheen.minX, y: rect.minY),
+                        endPoint: CGPoint(x: sheen.maxX, y: rect.minY)))
+        }
+
+        // Glassy edge highlight.
+        ctx.stroke(body, with: .linearGradient(
+            Gradient(colors: [.white.opacity(0.55), .white.opacity(0.12)]),
+            startPoint: CGPoint(x: rect.midX, y: rect.minY),
+            endPoint: CGPoint(x: rect.midX, y: rect.maxY)), lineWidth: 1)
     }
 
     /// Smooth green → red by RAM pressure.
