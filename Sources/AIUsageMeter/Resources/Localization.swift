@@ -718,6 +718,96 @@ class LocalizationManager {
         }
     }
 
+    var tabUsage: String {
+        switch currentLanguage {
+        case .english: return "Usage"
+        case .korean: return "사용량"
+        case .japanese: return "使用量"
+        case .chinese: return "用量"
+        case .spanish: return "Uso"
+        case .french: return "Usage"
+        case .german: return "Nutzung"
+        case .portuguese: return "Uso"
+        case .russian: return "Использование"
+        case .italian: return "Utilizzo"
+        }
+    }
+
+    var tabLoad: String {
+        switch currentLanguage {
+        case .english: return "Load"
+        case .korean: return "부하"
+        case .japanese: return "負荷"
+        case .chinese: return "负载"
+        case .spanish: return "Carga"
+        case .french: return "Charge"
+        case .german: return "Last"
+        case .portuguese: return "Carga"
+        case .russian: return "Нагрузка"
+        case .italian: return "Carico"
+        }
+    }
+
+    var ram: String {
+        switch currentLanguage {
+        case .english: return "RAM"
+        case .korean: return "메모리"
+        case .japanese: return "メモリ"
+        case .chinese: return "内存"
+        case .spanish: return "RAM"
+        case .french: return "RAM"
+        case .german: return "RAM"
+        case .portuguese: return "RAM"
+        case .russian: return "ОЗУ"
+        case .italian: return "RAM"
+        }
+    }
+
+    var topCPU: String {
+        switch currentLanguage {
+        case .english: return "Top CPU"
+        case .korean: return "CPU 상위"
+        case .japanese: return "CPU上位"
+        case .chinese: return "CPU 占用"
+        case .spanish: return "Mayor CPU"
+        case .french: return "Top CPU"
+        case .german: return "Top-CPU"
+        case .portuguese: return "Maior CPU"
+        case .russian: return "Топ CPU"
+        case .italian: return "Top CPU"
+        }
+    }
+
+    var loadTab: String {
+        switch currentLanguage {
+        case .english: return "System load tab"
+        case .korean: return "시스템 부하 탭"
+        case .japanese: return "システム負荷タブ"
+        case .chinese: return "系统负载标签"
+        case .spanish: return "Pestaña de carga del sistema"
+        case .french: return "Onglet de charge système"
+        case .german: return "System­last-Tab"
+        case .portuguese: return "Aba de carga do sistema"
+        case .russian: return "Вкладка нагрузки системы"
+        case .italian: return "Scheda carico di sistema"
+        }
+    }
+
+    var loadTabDesc: String {
+        switch currentLanguage {
+        case .english: return "Show a Load tab with CPU, GPU, and memory usage."
+        case .korean: return "CPU·GPU·메모리 사용량을 보는 부하 탭을 표시합니다."
+        case .japanese: return "CPU・GPU・メモリ使用量を見る負荷タブを表示します。"
+        case .chinese: return "显示包含 CPU、GPU 和内存使用量的负载标签。"
+        case .spanish: return "Muestra una pestaña de carga con uso de CPU, GPU y memoria."
+        case .french: return "Affiche un onglet de charge avec l'utilisation CPU, GPU et mémoire."
+        case .german: return "Zeigt einen Last-Tab mit CPU-, GPU- und Speichernutzung."
+        case .portuguese: return "Mostra uma aba de carga com uso de CPU, GPU e memória."
+        case .russian: return "Показывает вкладку нагрузки с использованием CPU, GPU и памяти."
+        case .italian: return "Mostra una scheda carico con uso di CPU, GPU e memoria."
+        }
+    }
+
     var aiDiagnose: String {
         switch currentLanguage {
         case .english: return "Diagnose with AI"

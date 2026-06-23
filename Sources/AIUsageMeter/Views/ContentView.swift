@@ -167,12 +167,17 @@ struct PulseEffect: ViewModifier {
     }
 }
 
+enum PanelTab { case usage, load }
+
 struct MainPanel: View {
     @Bindable var appState: AppState
     @Binding var showSettings: Bool
 
     @State private var appeared = false
     @State private var showLegendHelp = false
+    @State private var tab: PanelTab = .usage
+
+    private var loadTabEnabled: Bool { AppDefaults.userDefaults.object(forKey: "loadTabEnabled") as? Bool ?? true }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -219,56 +224,65 @@ struct MainPanel: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
 
-            VStack(spacing: 14) {
-                HStack(spacing: enabledServices.count >= 3 ? 20 : 32) {
-                    ForEach(Array(enabledServices.enumerated()), id: \.element.id) { index, service in
-                        CircularGaugeView(service: service, compact: enabledServices.count >= 3)
-                            .opacity(appeared ? 1 : 0)
-                            .offset(y: appeared ? 0 : 12)
-                            .animation(
-                                .spring(response: 0.5, dampingFraction: 0.7)
-                                    .delay(Double(index) * 0.08),
-                                value: appeared
-                            )
-                    }
+            if loadTabEnabled {
+                Picker("", selection: $tab) {
+                    Text(L.tabUsage).tag(PanelTab.usage)
+                    Text(L.tabLoad).tag(PanelTab.load)
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
-
-                VStack(spacing: 10) {
-                    ForEach(Array(enabledServices.enumerated()), id: \.element.id) { index, service in
-                        DetailCard(
-                            service: service,
-                            onRefresh: { Task { await appState.refresh(interactive: true) } }
-                        )
-                            .opacity(appeared ? 1 : 0)
-                            .offset(y: appeared ? 0 : 16)
-                            .animation(
-                                .spring(response: 0.5, dampingFraction: 0.75)
-                                    .delay(0.15 + Double(index) * 0.08),
-                                value: appeared
-                            )
-                    }
-                }
-
-                TokenUsageView(summary: appState.tokenUsage)
-                    .opacity(appeared ? 1 : 0)
-                    .offset(y: appeared ? 0 : 16)
-                    .animation(
-                        .spring(response: 0.5, dampingFraction: 0.75).delay(0.3),
-                        value: appeared
-                    )
-
-                HeatStrip()
-                    .opacity(appeared ? 1 : 0)
-                    .offset(y: appeared ? 0 : 16)
-                    .animation(
-                        .spring(response: 0.5, dampingFraction: 0.75).delay(0.36),
-                        value: appeared
-                    )
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .padding(.horizontal, 16)
+                .padding(.bottom, 6)
             }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 10)
+
+            if tab == .load && loadTabEnabled {
+                LoadView()
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 10)
+            } else {
+                VStack(spacing: 14) {
+                    HStack(spacing: enabledServices.count >= 3 ? 20 : 32) {
+                        ForEach(Array(enabledServices.enumerated()), id: \.element.id) { index, service in
+                            CircularGaugeView(service: service, compact: enabledServices.count >= 3)
+                                .opacity(appeared ? 1 : 0)
+                                .offset(y: appeared ? 0 : 12)
+                                .animation(
+                                    .spring(response: 0.5, dampingFraction: 0.7)
+                                        .delay(Double(index) * 0.08),
+                                    value: appeared
+                                )
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+
+                    VStack(spacing: 10) {
+                        ForEach(Array(enabledServices.enumerated()), id: \.element.id) { index, service in
+                            DetailCard(
+                                service: service,
+                                onRefresh: { Task { await appState.refresh(interactive: true) } }
+                            )
+                                .opacity(appeared ? 1 : 0)
+                                .offset(y: appeared ? 0 : 16)
+                                .animation(
+                                    .spring(response: 0.5, dampingFraction: 0.75)
+                                        .delay(0.15 + Double(index) * 0.08),
+                                    value: appeared
+                                )
+                        }
+                    }
+
+                    TokenUsageView(summary: appState.tokenUsage)
+                        .opacity(appeared ? 1 : 0)
+                        .offset(y: appeared ? 0 : 16)
+                        .animation(
+                            .spring(response: 0.5, dampingFraction: 0.75).delay(0.3),
+                            value: appeared
+                        )
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 10)
+            }
 
             Divider().opacity(0.3).padding(.horizontal, 16)
 
@@ -608,10 +622,28 @@ struct SettingsPanel: View {
     @ViewBuilder
     private var thermalAdvisorCard: some View {
         let advisor = ThermalAdvisor.shared
-        // Config only — the live status + diagnosis live on the main panel's heat
-        // strip. Here the user sets the key (for AI diagnosis) and the auto-when-hot
-        // opt-in. The privacy note applies to AI calls; the strip itself is local.
+        // Config only — the live load gauges + diagnosis live in the main panel's
+        // Load tab. Here the user toggles the Load tab, sets the key (for AI
+        // diagnosis), and the auto-when-hot opt-in.
         VStack(alignment: .leading, spacing: 10) {
+            Toggle(isOn: Binding(
+                get: { AppDefaults.userDefaults.object(forKey: "loadTabEnabled") as? Bool ?? true },
+                set: { AppDefaults.userDefaults.set($0, forKey: "loadTabEnabled") }
+            )) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(L.loadTab)
+                        .font(.system(size: 13, weight: .medium))
+                    Text(L.loadTabDesc)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .toggleStyle(.switch)
+            .tint(.accentColor)
+
+            Divider().opacity(0.2)
+
             VStack(alignment: .leading, spacing: 4) {
                 Text(L.anthropicKey)
                     .font(.system(size: 11, weight: .medium))
@@ -890,136 +922,168 @@ struct CircularGaugeView: View {
     }
 }
 
-/// Always-on system heat summary on the main panel. Simple one line (local, no
-/// API key); tap to expand top-CPU processes and an optional AI diagnosis.
-struct HeatStrip: View {
+/// The "Load" tab: a 2-axis load box (width = CPU, height = GPU, color = RAM),
+/// the top-CPU process list, and an optional on-demand AI diagnosis.
+struct LoadView: View {
+    private var load = SystemLoadMonitor.shared
     private var advisor = ThermalAdvisor.shared
-    @State private var expanded = false
+
+    private let boxW: CGFloat = 196
+    private let boxH: CGFloat = 116
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Button {
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) { expanded.toggle() }
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "thermometer.medium")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(heatColor)
-                    Text(summaryText)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.quaternary)
-                        .rotationEffect(.degrees(expanded ? 90 : 0))
-                }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                loadGauge
+                processList
+                Divider().opacity(0.2)
+                aiSection
             }
-            .buttonStyle(.plain)
-
-            if expanded {
-                if !advisor.topProcesses.isEmpty {
-                    VStack(spacing: 3) {
-                        ForEach(advisor.topProcesses) { p in
-                            HStack {
-                                Text(p.name)
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                                Spacer()
-                                Text("\(Int(p.cpu.rounded()))%")
-                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                                    .foregroundStyle(p.cpu >= 50 ? Color.orange : Color.secondary)
-                            }
-                        }
-                    }
-
-                    Divider().opacity(0.2)
-
-                    if advisor.hasAPIKey {
-                        Button {
-                            advisor.diagnoseNow()
-                        } label: {
-                            HStack(spacing: 6) {
-                                if advisor.isDiagnosing {
-                                    ProgressView().controlSize(.small)
-                                } else {
-                                    Image(systemName: "sparkles").font(.system(size: 11))
-                                }
-                                Text(advisor.isDiagnosing ? L.updating : L.aiDiagnose)
-                                    .font(.system(size: 11, weight: .medium))
-                            }
-                        }
-                        .buttonStyle(.glass)
-                        .buttonBorderShape(.capsule)
-                        .disabled(advisor.isDiagnosing)
-
-                        if let diagnosis = advisor.diagnosis {
-                            HStack(alignment: .top, spacing: 8) {
-                                Image(systemName: "sparkles")
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(.orange)
-                                Text(diagnosis)
-                                    .font(.system(size: 11))
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(8)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .fill(Color.orange.opacity(0.08))
-                            )
-                        }
-                        if let err = advisor.lastError {
-                            Text(err).font(.system(size: 10)).foregroundStyle(.red)
-                        }
-                    } else {
-                        Text(L.thermalAdvisorNeedsKey)
-                            .font(.system(size: 10))
-                            .foregroundStyle(.tertiary)
-                    }
-                } else {
-                    Text("…").font(.system(size: 11)).foregroundStyle(.tertiary)
-                }
-            }
+            .padding(12)
         }
-        .padding(12)
+        .frame(maxHeight: 560)
         .premiumCard()
         .task {
-            // Refresh the local summary while the panel is open; auto-cancels on close.
+            // Sample while the tab is open; auto-cancels when it closes. The first
+            // CPU read only seeds the tick baseline, so sample once, then loop.
+            load.sample()
+            await advisor.sampleNow()
             while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                load.sample()
                 await advisor.sampleNow()
-                try? await Task.sleep(nanoseconds: 6_000_000_000)
             }
         }
     }
 
-    private var summaryText: String {
-        let label = Self.localizedThermal(advisor.thermalState)
-        if let top = advisor.topProcesses.first, top.cpu >= 10 {
-            return "\(label) · \(top.name) \(Int(top.cpu.rounded()))%"
+    // MARK: 2-axis gauge
+
+    private var loadGauge: some View {
+        let cpuFrac = CGFloat(min(max(load.cpu, 0), 100) / 100)
+        let gpuFrac = CGFloat(min(max(load.gpu, 0), 100) / 100)
+        return VStack(spacing: 8) {
+            HStack(alignment: .center, spacing: 8) {
+                // GPU (vertical axis)
+                VStack(spacing: 1) {
+                    Text("GPU").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
+                    Text("\(Int(load.gpu.rounded()))%").font(.system(size: 13, weight: .bold, design: .rounded))
+                }
+                .frame(width: 36)
+
+                ZStack(alignment: .bottomLeading) {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color(nsColor: .separatorColor).opacity(0.12))
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(ramColor.gradient)
+                        .frame(width: max(8, boxW * cpuFrac), height: max(8, boxH * gpuFrac))
+                        .animation(.spring(response: 0.5, dampingFraction: 0.85), value: load.cpu)
+                        .animation(.spring(response: 0.5, dampingFraction: 0.85), value: load.gpu)
+                        .animation(.easeInOut(duration: 0.4), value: load.ram)
+                }
+                .frame(width: boxW, height: boxH)
+            }
+
+            // CPU (horizontal axis) — aligned under the box, not the GPU label
+            HStack(spacing: 6) {
+                Spacer().frame(width: 44)
+                Text("CPU").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
+                Text("\(Int(load.cpu.rounded()))%").font(.system(size: 13, weight: .bold, design: .rounded))
+                Spacer()
+            }
+
+            // RAM legend (the fill color)
+            HStack(spacing: 6) {
+                Spacer().frame(width: 44)
+                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                    .fill(ramColor.gradient)
+                    .frame(width: 12, height: 12)
+                Text("\(L.ram) \(Int(load.ram.rounded()))%")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
         }
-        return label
     }
 
-    private var heatColor: Color {
-        switch advisor.thermalState {
-        case .nominal: return .secondary
-        case .fair: return .yellow
-        case .serious, .critical: return .orange
-        @unknown default: return .secondary
+    // MARK: process list
+
+    @ViewBuilder
+    private var processList: some View {
+        if !advisor.topProcesses.isEmpty {
+            VStack(spacing: 3) {
+                Text(L.topCPU)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                ForEach(advisor.topProcesses) { p in
+                    HStack {
+                        Text(p.name)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        Spacer()
+                        Text("\(Int(p.cpu.rounded()))%")
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(p.cpu >= 50 ? Color.orange : Color.secondary)
+                    }
+                }
+            }
         }
     }
 
-    static func localizedThermal(_ state: ProcessInfo.ThermalState) -> String {
-        switch state {
-        case .nominal: return L.thermalNominal
-        case .fair: return L.thermalFair
-        case .serious: return L.thermalSerious
-        case .critical: return L.thermalCritical
-        @unknown default: return "—"
+    // MARK: AI diagnosis
+
+    @ViewBuilder
+    private var aiSection: some View {
+        if advisor.hasAPIKey {
+            Button {
+                advisor.diagnoseNow()
+            } label: {
+                HStack(spacing: 6) {
+                    if advisor.isDiagnosing {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: "sparkles").font(.system(size: 11))
+                    }
+                    Text(advisor.isDiagnosing ? L.updating : L.aiDiagnose)
+                        .font(.system(size: 11, weight: .medium))
+                }
+            }
+            .buttonStyle(.glass)
+            .buttonBorderShape(.capsule)
+            .disabled(advisor.isDiagnosing)
+
+            if let diagnosis = advisor.diagnosis {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.orange)
+                    Text(diagnosis)
+                        .font(.system(size: 11))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(8)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.orange.opacity(0.08))
+                )
+            }
+            if let err = advisor.lastError {
+                Text(err).font(.system(size: 10)).foregroundStyle(.red)
+            }
+        } else {
+            Text(L.thermalAdvisorNeedsKey)
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
         }
+    }
+
+    private var ramColor: Color {
+        let r = load.ram
+        if r < 60 { return .green }
+        if r < 80 { return .yellow }
+        return .red
     }
 }
 
