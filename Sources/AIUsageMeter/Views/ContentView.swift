@@ -1090,9 +1090,27 @@ struct LoadView: View {
 /// change). The size eases from the previous sample to the newest and is redrawn
 /// every display frame via TimelineView, with a gentle breathing + moving sheen,
 /// so it feels like a fluid, living volume at 60 fps.
+/// Continuously chases the latest sample with frame-rate-aware exponential
+/// smoothing (a critically-damped low-pass), so motion never restarts an ease
+/// curve or stalls between samples — it just flows.
+final class LoadSmoother {
+    var cpu = 0.0, gpu = 0.0, ram = 0.0
+    private var lastTick: Date?
+    private let tau = 0.40   // seconds to ~63% of the way to a new target
+
+    func advance(toCPU tc: Double, gpu tg: Double, ram tr: Double, now: Date) {
+        let dt = lastTick.map { max(0, now.timeIntervalSince($0)) } ?? 0
+        lastTick = now
+        let k = dt > 0 ? (1 - exp(-dt / tau)) : 0
+        cpu += (tc - cpu) * k
+        gpu += (tg - gpu) * k
+        ram += (tr - ram) * k
+    }
+}
+
 struct LoadTrajectory: View {
     var load: SystemLoadMonitor
-    private let interval: Double = 1.0
+    @State private var smoother = LoadSmoother()
 
     var body: some View {
         TimelineView(.animation) { timeline in
@@ -1132,17 +1150,13 @@ struct LoadTrajectory: View {
             ctx.stroke(path, with: .color(Self.ramColor(p.ram).opacity(0.05 + frac * 0.10)), lineWidth: 1)
         }
 
-        // Eased current size + color (glides over one interval).
-        let last = hist[n - 1]
-        let prev = n >= 2 ? hist[n - 2] : last
-        let t = min(1, max(0, now.timeIntervalSince(load.lastSampleAt) / interval))
-        let te = 1 - pow(1 - t, 3)   // easeOutCubic
+        // Continuously chase the latest sample (no per-second ease restart).
+        smoother.advance(toCPU: load.cpu, gpu: load.gpu, ram: load.ram, now: now)
         let phase = now.timeIntervalSinceReferenceDate
         let breath = 1 + 0.012 * sin(phase * 1.6)   // subtle living motion
-        let cpu = (prev.cpu + (last.cpu - prev.cpu) * te) * breath
-        let gpu = (prev.gpu + (last.gpu - prev.gpu) * te) * breath
-        let ram = prev.ram + (last.ram - prev.ram) * te
-        let color = Self.ramColor(ram)
+        let cpu = smoother.cpu * breath
+        let gpu = smoother.gpu * breath
+        let color = Self.ramColor(smoother.ram)
 
         let (body, rect) = rrect(cpu: cpu, gpu: gpu, radius: 11)
 
