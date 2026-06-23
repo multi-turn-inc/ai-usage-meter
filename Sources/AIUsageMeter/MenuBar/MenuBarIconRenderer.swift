@@ -19,7 +19,10 @@ enum MenuBarIconRenderer {
 
         let serviceWidth: CGFloat = 38
         let spacing: CGFloat = 6
-        let totalWidth = CGFloat(services.count) * serviceWidth + CGFloat(services.count - 1) * spacing
+        // Optional system-load meter cell after the services.
+        let showLoad = AppDefaults.userDefaults.object(forKey: "loadTabEnabled") as? Bool ?? true
+        let cellCount = services.count + (showLoad ? 1 : 0)
+        let totalWidth = CGFloat(cellCount) * serviceWidth + CGFloat(cellCount - 1) * spacing
         let height: CGFloat = 22
 
         let snapshot = services.map { service -> ServiceSnapshot in
@@ -40,6 +43,10 @@ enum MenuBarIconRenderer {
 
         let elapsed = animationDate.timeIntervalSinceReferenceDate
 
+        // Snapshot load values up front (render closure runs on the same actor).
+        let load = SystemLoadMonitor.shared
+        let loadSnapshot: (cpu: Double, gpu: Double, ram: Double)? = showLoad ? (load.cpu, load.gpu, load.ram) : nil
+
         let image = NSImage(size: NSSize(width: totalWidth, height: height), flipped: false) { _ in
             let dark: Bool = {
                 switch NSAppearance.current.bestMatch(from: [.darkAqua, .aqua]) {
@@ -52,6 +59,10 @@ enum MenuBarIconRenderer {
             for service in snapshot {
                 drawMeter(at: x, service: service, dark: dark, width: serviceWidth, height: height, elapsed: elapsed)
                 x += serviceWidth + spacing
+            }
+            if let loadSnapshot {
+                drawLoadMeter(at: x, cpu: loadSnapshot.cpu, gpu: loadSnapshot.gpu, ram: loadSnapshot.ram,
+                              dark: dark, width: serviceWidth, height: height)
             }
             return true
         }
@@ -177,6 +188,60 @@ enum MenuBarIconRenderer {
                 emptyBarColor.setFill()
             }
 
+            NSBezierPath(rect: fillRect).fill()
+        }
+    }
+
+    /// System-load meter, same grammar as the service meters: horizontal fill = CPU,
+    /// bar height = GPU, color = RAM pressure (green→red).
+    private static func drawLoadMeter(
+        at x: CGFloat,
+        cpu: Double, gpu: Double, ram: Double,
+        dark: Bool,
+        width: CGFloat,
+        height: CGFloat
+    ) {
+        let color = SystemLoadMonitor.ramColor(ram).nsColor
+        let labelColor = dark ? NSColor.white : NSColor.black
+        let borderColor = dark ? NSColor.white.withAlphaComponent(0.55) : NSColor.black.withAlphaComponent(0.40)
+        let emptyBarColor = dark ? NSColor.white.withAlphaComponent(0.10) : NSColor.black.withAlphaComponent(0.10)
+
+        let cpuFrac = max(0, min(1, cpu / 100))
+        let gpuFrac = max(0, min(1, gpu / 100))
+
+        let labelAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 8, weight: .medium),
+            .foregroundColor: labelColor,
+        ]
+        let label = "Load"
+        let labelSize = label.size(withAttributes: labelAttrs)
+        NSAttributedString(string: label, attributes: labelAttrs)
+            .draw(at: NSPoint(x: x + (width - labelSize.width) / 2, y: height - 9))
+
+        let barCount = 10
+        let barAreaWidth = width - 4
+        let barWidth: CGFloat = (barAreaWidth - CGFloat(barCount - 1) * 1) / CGFloat(barCount)
+        let maxBarHeight: CGFloat = 10
+        let barY: CGFloat = 2
+        let barHeight = maxBarHeight * max(0.2, CGFloat(gpuFrac))   // GPU → height
+
+        let frameRect = NSRect(x: x + 1, y: barY - 1, width: barAreaWidth + 2, height: maxBarHeight + 2)
+        let framePath = NSBezierPath(roundedRect: frameRect, xRadius: 2, yRadius: 2)
+        NSColor.black.withAlphaComponent(0.28).setFill()
+        framePath.fill()
+        borderColor.setStroke()
+        framePath.lineWidth = 0.75
+        framePath.stroke()
+
+        for i in 0..<barCount {
+            let barX = x + 2 + CGFloat(i) * (barWidth + 1)
+            let fillRect = NSRect(x: barX, y: barY, width: barWidth, height: barHeight)
+            let barPosition = CGFloat(i + 1) / CGFloat(barCount)
+            if barPosition <= CGFloat(cpuFrac) + 0.05 {   // CPU → fill
+                color.setFill()
+            } else {
+                emptyBarColor.setFill()
+            }
             NSBezierPath(rect: fillRect).fill()
         }
     }

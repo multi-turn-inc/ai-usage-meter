@@ -1,5 +1,6 @@
 import Foundation
 import IOKit
+import SwiftUI
 
 /// Samples system load — CPU, GPU, and RAM — without root.
 /// - CPU: Mach `host_statistics(HOST_CPU_LOAD_INFO)` tick deltas between samples.
@@ -17,16 +18,6 @@ final class SystemLoadMonitor {
     var gpu: Double = 0   // 0–100, device utilization
     var ram: Double = 0   // 0–100, used (active+wired+compressed) / physical
 
-    /// Recent (cpu, gpu, ram) samples for the trajectory trail, oldest → newest.
-    struct Point { let cpu: Double; let gpu: Double; let ram: Double }
-    var history: [Point] = []
-    /// When the newest sample landed — the trail view eases the head from the
-    /// previous point to the newest one over one sample interval (read without
-    /// triggering observation, so per-frame redraws stay cheap).
-    @ObservationIgnored private(set) var lastSampleAt: Date = .distantPast
-
-    private let historyCapacity = 64
-
     @ObservationIgnored private var prevBusy: UInt64 = 0
     @ObservationIgnored private var prevTotal: UInt64 = 0
 
@@ -36,10 +27,13 @@ final class SystemLoadMonitor {
         if let c = sampleCPU() { cpu = c }
         if let g = Self.sampleGPU() { gpu = g }
         if let r = Self.sampleRAM() { ram = r }
+    }
 
-        history.append(Point(cpu: cpu, gpu: gpu, ram: ram))
-        if history.count > historyCapacity { history.removeFirst(history.count - historyCapacity) }
-        lastSampleAt = Date()
+    /// Smooth green → red by RAM pressure (shared by the menu-bar meter and the
+    /// Load tab so the color always means the same thing).
+    static func ramColor(_ r: Double) -> Color {
+        let x = min(max(r, 0), 100) / 100
+        return Color(hue: 0.33 * (1 - x), saturation: 0.75, brightness: 0.95)
     }
 
     // MARK: - CPU (tick deltas)

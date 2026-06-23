@@ -922,14 +922,12 @@ struct CircularGaugeView: View {
     }
 }
 
-/// The "Load" tab: a 2-axis load box (width = CPU, height = GPU, color = RAM),
-/// the top-CPU process list, and an optional on-demand AI diagnosis.
+/// The "Load" tab detail: simple CPU / GPU / RAM bars, the top-CPU process list,
+/// and an optional on-demand AI diagnosis. The glanceable gauge lives in the menu
+/// bar; this is the "open for detail" view.
 struct LoadView: View {
     private var load = SystemLoadMonitor.shared
     private var advisor = ThermalAdvisor.shared
-
-    private let boxW: CGFloat = 196
-    private let boxH: CGFloat = 116
 
     var body: some View {
         ScrollView {
@@ -944,68 +942,49 @@ struct LoadView: View {
         .frame(maxHeight: 560)
         .premiumCard()
         .task {
-            // Sample while the tab is open; auto-cancels when it closes. The first
-            // CPU read only seeds the tick baseline, so sample once, then loop.
-            // Load is cheap (in-process) → 1s for a dense, smooth trail; the
-            // process list shells out to `ps`, so refresh it only every 3s.
+            // Refresh while the tab is open; auto-cancels when it closes. The menu
+            // bar already samples load continuously; here we also refresh the
+            // process list (which shells out to `ps`) every ~2s.
             load.sample()
             await advisor.sampleNow()
-            var tick = 0
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
                 load.sample()
-                tick += 1
-                if tick % 3 == 0 { await advisor.sampleNow() }
+                await advisor.sampleNow()
             }
         }
     }
 
-    // MARK: 2-axis gauge
+    // MARK: CPU / GPU / RAM bars
 
     private var loadGauge: some View {
         VStack(spacing: 8) {
-            HStack(alignment: .center, spacing: 8) {
-                // GPU (vertical axis)
-                VStack(spacing: 1) {
-                    Text("GPU").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
-                    Text("\(Int(load.gpu.rounded()))%").font(.system(size: 13, weight: .bold, design: .rounded))
-                        .contentTransition(.numericText())
+            loadBar(label: "CPU", value: load.cpu, color: .blue)
+            loadBar(label: "GPU", value: load.gpu, color: .purple)
+            loadBar(label: L.ram, value: load.ram, color: SystemLoadMonitor.ramColor(load.ram))
+        }
+    }
+
+    private func loadBar(label: String, value: Double, color: Color) -> some View {
+        HStack(spacing: 8) {
+            Text(label)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 34, alignment: .leading)
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color(nsColor: .separatorColor).opacity(0.18))
+                    Capsule().fill(color.gradient)
+                        .frame(width: max(4, geo.size.width * CGFloat(min(max(value, 0), 100) / 100)))
+                        .animation(.easeOut(duration: 0.6), value: value)
                 }
-                .frame(width: 36)
-
-                LoadTrajectory(load: load)
-                    .frame(width: boxW, height: boxH)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(Color(nsColor: .separatorColor).opacity(0.10))
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(Color(nsColor: .separatorColor).opacity(0.18), lineWidth: 1)
-                    )
             }
-
-            // CPU (horizontal axis) — aligned under the box, not the GPU label
-            HStack(spacing: 6) {
-                Spacer().frame(width: 44)
-                Text("CPU").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
-                Text("\(Int(load.cpu.rounded()))%").font(.system(size: 13, weight: .bold, design: .rounded))
-                    .contentTransition(.numericText())
-                Spacer()
-            }
-
-            // RAM legend (the trail color)
-            HStack(spacing: 6) {
-                Spacer().frame(width: 44)
-                RoundedRectangle(cornerRadius: 3, style: .continuous)
-                    .fill(LoadTrajectory.ramColor(load.ram).gradient)
-                    .frame(width: 12, height: 12)
-                Text("\(L.ram) \(Int(load.ram.rounded()))%")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
-                Spacer()
-            }
+            .frame(height: 8)
+            Text("\(Int(value.rounded()))%")
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(.primary)
+                .frame(width: 38, alignment: .trailing)
+                .contentTransition(.numericText())
         }
     }
 
@@ -1084,150 +1063,6 @@ struct LoadView: View {
     }
 }
 
-/// The load gauge: a translucent, glassy 3D rounded rectangle that grows from the
-/// bottom-left — width = CPU, height = GPU — with its fill color = RAM pressure.
-/// Faint outlines of recent sizes linger behind it (the trajectory of the size
-/// change). The size eases from the previous sample to the newest and is redrawn
-/// every display frame via TimelineView, with a gentle breathing + moving sheen,
-/// so it feels like a fluid, living volume at 60 fps.
-/// Moves toward the latest sample at a CONSTANT speed (a fixed %/second), so the
-/// rate of change feels uniform — no accelerate-near-far easing, no per-sample
-/// restart. It glides at the same pace whether the target is close or far, and
-/// simply holds once it arrives.
-final class LoadSmoother {
-    var cpu = 0.0, gpu = 0.0, ram = 0.0
-    private var lastTick: Date?
-    private let speed = 18.0       // percent per second (constant) for CPU/GPU —
-                                   // low enough that it's always gliding, not snap-and-stop
-    private let ramSpeed = 14.0    // RAM color shifts a touch more slowly
-
-    func advance(toCPU tc: Double, gpu tg: Double, ram tr: Double, now: Date) {
-        let dt = lastTick.map { max(0, now.timeIntervalSince($0)) } ?? 0
-        lastTick = now
-        cpu = step(cpu, tc, speed * dt)
-        gpu = step(gpu, tg, speed * dt)
-        ram = step(ram, tr, ramSpeed * dt)
-    }
-
-    private func step(_ current: Double, _ target: Double, _ maxDelta: Double) -> Double {
-        let d = target - current
-        if abs(d) <= maxDelta { return target }
-        return current + (d < 0 ? -maxDelta : maxDelta)
-    }
-}
-
-struct LoadTrajectory: View {
-    var load: SystemLoadMonitor
-    @State private var smoother = LoadSmoother()
-
-    var body: some View {
-        TimelineView(.animation) { timeline in
-            Canvas { ctx, size in
-                draw(ctx, size, now: timeline.date)
-            }
-        }
-    }
-
-    private func draw(_ ctx: GraphicsContext, _ size: CGSize, now: Date) {
-        // faint grid
-        let grid = Color.gray.opacity(0.10)
-        for f in [0.25, 0.5, 0.75] {
-            var v = Path(); v.move(to: CGPoint(x: size.width * f, y: 0)); v.addLine(to: CGPoint(x: size.width * f, y: size.height))
-            ctx.stroke(v, with: .color(grid), lineWidth: 0.5)
-            var h = Path(); h.move(to: CGPoint(x: 0, y: size.height * f)); h.addLine(to: CGPoint(x: size.width, y: size.height * f))
-            ctx.stroke(h, with: .color(grid), lineWidth: 0.5)
-        }
-
-        let hist = load.history
-        guard !hist.isEmpty else { return }
-
-        // Chase the latest sample at a constant (low) speed — always gliding,
-        // never snapping then stalling, so the rate of change feels uniform.
-        smoother.advance(toCPU: load.cpu, gpu: load.gpu, ram: load.ram, now: now)
-        let phase = now.timeIntervalSinceReferenceDate
-        let cpu = smoother.cpu
-        let gpu = smoother.gpu
-        let color = Self.ramColor(smoother.ram)
-
-        // The (CPU, GPU) point = the volume's top-right corner.
-        func corner(_ c: Double, _ g: Double) -> CGPoint {
-            CGPoint(x: CGFloat(min(max(c, 0), 100) / 100) * size.width,
-                    y: size.height - CGFloat(min(max(g, 0), 100) / 100) * size.height)
-        }
-
-        // ---- Trajectory: a soft fading comet of where the corner has been ----
-        var trail = hist.suffix(22).map { corner($0.cpu, $0.gpu) }
-        trail.append(corner(cpu, gpu))   // join smoothly to the current corner
-        if trail.count >= 2 {
-            // blurred glow underlay
-            ctx.drawLayer { layer in
-                layer.addFilter(.blur(radius: 5))
-                for i in 1..<trail.count {
-                    let frac = Double(i) / Double(trail.count - 1)
-                    var s = Path(); s.move(to: trail[i - 1]); s.addLine(to: trail[i])
-                    layer.stroke(s, with: .color(color.opacity(pow(frac, 1.5) * 0.45)),
-                                 style: StrokeStyle(lineWidth: 2 + frac * 2.5, lineCap: .round, lineJoin: .round))
-                }
-            }
-            // crisp tapered line on top
-            for i in 1..<trail.count {
-                let frac = Double(i) / Double(trail.count - 1)
-                var s = Path(); s.move(to: trail[i - 1]); s.addLine(to: trail[i])
-                ctx.stroke(s, with: .color(color.opacity(pow(frac, 1.8) * 0.8)),
-                           style: StrokeStyle(lineWidth: 0.75 + frac * 1.75, lineCap: .round, lineJoin: .round))
-            }
-        }
-
-        // ---- Glass volume ----
-        let w = max(10, CGFloat(min(max(cpu, 0), 100) / 100) * size.width)
-        let h = max(10, CGFloat(min(max(gpu, 0), 100) / 100) * size.height)
-        let rect = CGRect(x: 0, y: size.height - h, width: w, height: h)
-        let body = Path(roundedRect: rect, cornerRadius: 11)
-
-        // Soft outer glow for depth.
-        ctx.drawLayer { layer in
-            layer.addFilter(.blur(radius: 12))
-            layer.fill(Path(roundedRect: rect.insetBy(dx: -1, dy: -1), cornerRadius: 12),
-                       with: .color(color.opacity(0.40)))
-        }
-
-        // Translucent 3D body: lighter top → deeper bottom.
-        ctx.fill(body, with: .linearGradient(
-            Gradient(colors: [color.opacity(0.72), color.opacity(0.40)]),
-            startPoint: CGPoint(x: rect.midX, y: rect.minY),
-            endPoint: CGPoint(x: rect.midX, y: rect.maxY)))
-
-        // Glass sheen on the upper portion, gently sliding for a fluid feel.
-        ctx.drawLayer { layer in
-            layer.clip(to: body)
-            let shift = CGFloat(sin(phase * 0.7)) * rect.width * 0.12
-            let sheen = CGRect(x: rect.minX - rect.width * 0.2 + shift, y: rect.minY,
-                               width: rect.width * 0.7, height: max(8, rect.height * 0.5))
-            layer.fill(Path(roundedRect: sheen, cornerRadius: 10),
-                       with: .linearGradient(
-                        Gradient(colors: [.white.opacity(0.0), .white.opacity(0.30), .white.opacity(0.0)]),
-                        startPoint: CGPoint(x: sheen.minX, y: rect.minY),
-                        endPoint: CGPoint(x: sheen.maxX, y: rect.minY)))
-        }
-
-        // Glassy edge highlight.
-        ctx.stroke(body, with: .linearGradient(
-            Gradient(colors: [.white.opacity(0.55), .white.opacity(0.12)]),
-            startPoint: CGPoint(x: rect.midX, y: rect.minY),
-            endPoint: CGPoint(x: rect.midX, y: rect.maxY)), lineWidth: 1)
-
-        // Bright head where the trail meets the volume's corner.
-        let head = CGPoint(x: rect.maxX, y: rect.minY)
-        ctx.fill(Path(ellipseIn: CGRect(x: head.x - 7, y: head.y - 7, width: 14, height: 14)), with: .color(color.opacity(0.28)))
-        ctx.fill(Path(ellipseIn: CGRect(x: head.x - 2.5, y: head.y - 2.5, width: 5, height: 5)), with: .color(.white.opacity(0.95)))
-    }
-
-    /// Smooth green → red by RAM pressure.
-    static func ramColor(_ r: Double) -> Color {
-        let x = min(max(r, 0), 100) / 100
-        return Color(hue: 0.33 * (1 - x), saturation: 0.75, brightness: 0.95)
-    }
-}
 
 struct DetailCard: View {
     let service: ServiceViewModel

@@ -12,6 +12,7 @@ final class MenuBarPanelController: NSObject, NSWindowDelegate {
     private var globalEventMonitor: EventMonitor?
     private var appearanceObservation: NSKeyValueObservation?
     private var consumingAnimationTimer: Timer?
+    private var loadTimer: Timer?
     private var lastIconSnapshot: IconSnapshot?
 
     init(title: String, appState: AppState, themeManager: ThemeManager) {
@@ -75,12 +76,30 @@ final class MenuBarPanelController: NSObject, NSWindowDelegate {
 
         startIconObservationLoop()
         syncConsumingAnimationTimer()
+        startLoadMeterTimer()
 
         autoOpenMenuBarLegendPanelIfNeeded()
     }
 
     deinit {
+        loadTimer?.invalidate()
         NSStatusBar.system.removeStatusItem(statusItem)
+    }
+
+    /// Samples system load and refreshes the menu-bar icon on a steady cadence so
+    /// the load meter stays live even when the panel is closed. Sampling is cheap
+    /// (in-process syscalls) and the icon redraw is a tiny image.
+    private func startLoadMeterTimer() {
+        SystemLoadMonitor.shared.sample()
+        let timer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard AppDefaults.userDefaults.object(forKey: "loadTabEnabled") as? Bool ?? true else { return }
+                SystemLoadMonitor.shared.sample()
+                self?.updateStatusItemImage()
+            }
+        }
+        timer.tolerance = 0.3
+        loadTimer = timer
     }
 
     private func startIconObservationLoop() {
