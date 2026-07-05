@@ -28,3 +28,6 @@ DerivedData/
 # Build
 build/
 *.dmg
+
+# OMC (oh-my-claudecode) local session state
+.omc/
