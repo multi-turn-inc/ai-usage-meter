@@ -2,14 +2,15 @@
 
 # Token Burn
 
-**See what your AI agents are burning. Right from the menu bar.**
+**See what your AI agents are burning — right from the menu bar.**
 
-Claude Code and Codex usage — remaining quota, token consumption, reset timers — at a glance.
+Remaining quota, token burn, and system load for Claude Code & Codex, one glance away.
 
 [![macOS](https://img.shields.io/badge/macOS-26%2B-000?logo=apple&logoColor=white)](https://www.apple.com/macos/)
 [![Swift](https://img.shields.io/badge/Swift-5.9-F05138?logo=swift&logoColor=white)](https://swift.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/multi-turn-inc/ai-usage-meter?include_prereleases)](../../releases)
+[![Downloads](https://img.shields.io/github/downloads/multi-turn-inc/ai-usage-meter/total)](../../releases)
 
 <br>
 <img src="docs/screenshot-panel.png" width="300" alt="Token Burn Panel">
@@ -18,28 +19,28 @@ Claude Code and Codex usage — remaining quota, token consumption, reset timers
 
 <br>
 
-## What It Does
+## Why
+
+Agent sessions quietly eat through your 5-hour and weekly quotas while you work — and you usually find out the moment you hit the wall. Token Burn keeps the remaining budget in sight at all times, and shows how hard your Mac is working while the agents run.
+
+## In the Menu Bar
 
 <img src="docs/screenshot-menubar.png" width="200" alt="Menu Bar">
 
-**Menu bar icon** encodes two things at once:
-- Horizontal fill → 5-hour remaining quota
-- Bar height → 7-day remaining quota
+Each service cell encodes two things at once:
 
-When an AI agent is actively calling APIs, the bars pulse with a heartbeat animation.
+- **Horizontal fill** → 5-hour quota remaining
+- **Bar height** → 7-day quota remaining
 
-**Click to open the panel:**
-- Circular gauges per service (Claude, Codex)
-- 5h / 7d remaining percentage with reset countdown
-- Token Burn chart — 1h, 24h, 7d scope, switch by trackpad scroll
+While an agent is actively calling APIs, the bars pulse with a heartbeat animation. An optional **system-load meter** (CPU × GPU, RAM as color) sits alongside — like a tiny activity monitor for agent workloads. Clicking a cell jumps straight to that view in the panel.
 
-**Token tracking** parses local logs directly:
-- Claude Code: `~/.claude/projects/**/*.jsonl`
-- Codex: `~/.codex/sessions/**/*.jsonl` (+ archived sessions)
-- Replayed/duplicated history is deduplicated (ccusage-style accounting)
-- Counts `input_tokens + output_tokens` (matches Claude `/stats`)
-- Shows estimated API-equivalent cost (cache-aware, bundled pricing table)
-- Everything stays local. Nothing is sent to any server.
+## In the Panel
+
+- **Circular gauges** per service — 5h / 7d remaining with reset countdown (*"3h 38m until reset"*)
+- **Token Burn chart** — 1h / 24h / 7d scope, switch by trackpad scroll, with cache-aware API-equivalent cost estimates
+- **System Load tab** — CPU × GPU gauge with RAM as color, top processes, and a glanceable heat strip on the main panel
+- **Heat advisor** *(optional)* — when your Mac runs hot, sends the top CPU process names to Claude using **your own** Anthropic API key and tells you what's cooking
+- **Staleness flags** — warns when a service stopped reporting fresh data
 
 ## Install
 
@@ -49,41 +50,37 @@ brew install --cask multi-turn-inc/tap/token-burn
 
 Or grab the latest `.dmg` from [Releases](../../releases).
 
-```bash
-# Or build from source
-git clone https://github.com/multi-turn-inc/ai-usage-meter.git
-cd ai-usage-meter
-swift build -c release
-./scripts/build-app.sh 4.3.0
-```
-
-### Requirements
-
-- macOS 26 (Tahoe) or later
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) or [Codex CLI](https://github.com/openai/codex) installed and authenticated
+**Requirements:** macOS 26 (Tahoe) or later, with [Claude Code](https://docs.anthropic.com/en/docs/claude-code) or [Codex CLI](https://github.com/openai/codex) installed and authenticated.
 
 ## How It Works
 
-Token Burn reads existing OAuth credentials from your local CLI tools. **No API keys or passwords are stored by the app.**
+Token Burn reuses the OAuth credentials your CLI tools already have. **It never asks for API keys or passwords.**
 
-| Service | Credential Source | Token Source |
-|---------|-----------------|--------------|
-| Claude | Keychain / `~/.claude/.credentials.json` | JSONL session logs |
-| Codex | Keychain / `~/.codex/auth.json` | SQLite logs |
+| Service | Credential source | Token source |
+|---------|-------------------|--------------|
+| Claude | Keychain / `~/.claude/.credentials.json` | `~/.claude/projects/**/*.jsonl` |
+| Codex | `~/.codex/auth.json` | `~/.codex/sessions/**/*.jsonl` |
 
-The app queries each provider's usage API and parses local token logs. Token refresh is handled automatically.
+- Quota comes from each provider's usage API; token counts come from parsing local session logs in a single streaming pass
+- Replayed and resumed history is deduplicated (ccusage-style accounting) — counts `input + output` tokens, matching Claude's `/stats`
+- Expired tokens are refreshed via the standard OAuth flow; deleted credential files are restored from Keychain
+- Everything stays local — logs are parsed on your machine and never uploaded
 
-## Features
+## Privacy & Security
 
-- **Remaining-first view** — shows how much is left, not how much you used
-- **Token Burn chart** — 1h / 24h / 7d scope with trackpad scroll
-- **Real-time detection** — heartbeat animation when AI is actively calling APIs
-- **Reset countdown** — "3h 38m until reset"
-- **Auto-refresh** — configurable interval (1m / 5m / 15m / 30m)
-- **Auto-update** — checks GitHub releases, downloads and applies automatically
-- **Credential recovery** — restores credential file from Keychain when deleted
-- **10 languages** — EN, KO, JA, ZH, ES, FR, DE, PT, RU, IT
-- **macOS native** — SwiftUI with Liquid Glass on macOS Tahoe
+This app is a **read-only viewer**, built to be paranoid about your tokens:
+
+- OAuth tokens are only ever sent to each provider's own API hosts (hard allowlist — a tampered config file can't redirect them)
+- Credential files are written with `0600` permissions; the app never stores secrets of its own
+- The optional heat advisor is the only other network call, and it's off until you provide your own API key
+- Auto-update is triple-checked: Ed25519-signed Sparkle feed, notarization assessment, and Developer ID pinning — with downgrade protection
+
+## More
+
+- Auto-refresh every 1 / 5 / 15 / 30 minutes
+- Auto-update via GitHub Releases
+- 10 languages — EN, KO, JA, ZH, ES, FR, DE, PT, RU, IT
+- Native SwiftUI with Liquid Glass on macOS Tahoe
 
 <details>
 <summary>Settings</summary>
@@ -91,14 +88,17 @@ The app queries each provider's usage API and parses local token logs. Token ref
 <img src="docs/screenshot-settings.png" width="300" alt="Settings">
 </details>
 
-## Security
+## Development
 
-This app is a **read-only viewer**. It:
-- Reads existing OAuth tokens from CLI tools' Keychain entries
-- Calls usage API endpoints (read-only)
-- Parses local log files (read-only)
-- Refreshes expired tokens via standard OAuth flow
-- Never stores credentials outside the system Keychain
+```bash
+git clone https://github.com/multi-turn-inc/ai-usage-meter.git
+cd ai-usage-meter
+swift build            # debug build
+swift test             # parser regression suite
+./scripts/build-app.sh <version>   # signed .app + DMG + local install
+```
+
+Parsing logic lives in the `AIUsageMeterCore` library target so it stays testable in isolation. Third-party licenses are listed in [docs/THIRD_PARTY_NOTICES.md](docs/THIRD_PARTY_NOTICES.md).
 
 ## License
 
