@@ -39,9 +39,15 @@ struct MainPanel: View {
                 .buttonStyle(.plain)
                 .focusEffectDisabled()
                 .popover(isPresented: $showLegendHelp) {
-                    MenuBarLegendContent(showsDescription: true)
-                        .padding(14)
-                        .frame(width: 280)
+                    if tab == .load && loadTabEnabled {
+                        LoadHelpContent()
+                            .padding(14)
+                            .frame(width: 280)
+                    } else {
+                        MenuBarLegendContent(showsDescription: true)
+                            .padding(14)
+                            .frame(width: 280)
+                    }
                 }
 
                 Button {

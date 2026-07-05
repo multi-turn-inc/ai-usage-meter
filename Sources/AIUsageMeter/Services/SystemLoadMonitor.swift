@@ -29,11 +29,14 @@ final class SystemLoadMonitor {
         if let r = Self.sampleRAM() { ram = r }
     }
 
-    /// Smooth green → red by RAM pressure (shared by the menu-bar meter and the
-    /// Load tab so the color always means the same thing).
+    /// Cyan → magenta by RAM pressure. Deliberately avoids the orange/violet
+    /// hues used by Claude and Codex so the Load cell in the menu bar never
+    /// gets confused with a service cell. Shared by the menu-bar meter and the
+    /// Load tab so the color always means the same thing.
     static func ramColor(_ r: Double) -> Color {
         let x = min(max(r, 0), 100) / 100
-        return Color(hue: 0.33 * (1 - x), saturation: 0.75, brightness: 0.95)
+        let hue = 0.5 + 0.35 * x   // 0.50 cyan → 0.85 magenta
+        return Color(hue: hue, saturation: 0.75, brightness: 0.95)
     }
 
     // MARK: - CPU (tick deltas)

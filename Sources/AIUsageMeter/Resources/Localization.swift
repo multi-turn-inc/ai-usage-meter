@@ -1047,6 +1047,66 @@ class LocalizationManager {
         case .italian: return "Visualizza dati inclusi"
         }
     }
+
+    var loadHelpTitle: String {
+        switch currentLanguage {
+        case .english: return "System Load"
+        case .korean: return "시스템 부하"
+        case .japanese: return "システム負荷"
+        case .chinese: return "系统负载"
+        case .spanish: return "Carga del sistema"
+        case .french: return "Charge système"
+        case .german: return "System­last"
+        case .portuguese: return "Carga do sistema"
+        case .russian: return "Нагрузка системы"
+        case .italian: return "Carico di sistema"
+        }
+    }
+
+    var loadHelpBars: String {
+        switch currentLanguage {
+        case .english: return "CPU, GPU, and memory usage sampled while agents run."
+        case .korean: return "에이전트가 실행되는 동안 CPU, GPU, 메모리 사용량을 표시합니다."
+        case .japanese: return "エージェント実行中の CPU・GPU・メモリ使用量を表示します。"
+        case .chinese: return "显示代理运行时的 CPU、GPU 和内存使用量。"
+        case .spanish: return "Uso de CPU, GPU y memoria mientras los agentes se ejecutan."
+        case .french: return "Utilisation CPU, GPU et mémoire pendant l'exécution des agents."
+        case .german: return "CPU-, GPU- und Speichernutzung während Agenten laufen."
+        case .portuguese: return "Uso de CPU, GPU e memória enquanto os agentes rodam."
+        case .russian: return "Использование CPU, GPU и памяти во время работы агентов."
+        case .italian: return "Uso di CPU, GPU e memoria mentre gli agenti sono attivi."
+        }
+    }
+
+    var loadHelpColor: String {
+        switch currentLanguage {
+        case .english: return "Color shifts from cyan to magenta as memory pressure rises — cyan is comfortable, magenta is tight."
+        case .korean: return "색은 메모리 압박이 커질수록 청록에서 자홍으로 변합니다 — 청록은 여유, 자홍은 빡빡한 상태입니다."
+        case .japanese: return "メモリ圧が高まるとシアンからマゼンタへ色が変化します — シアンは余裕、マゼンタは逼迫です。"
+        case .chinese: return "内存压力越大,颜色从青色逐渐变为品红 — 青色表示宽松,品红表示紧张。"
+        case .spanish: return "El color va de cian a magenta según sube la presión de memoria — cian holgado, magenta ajustado."
+        case .french: return "La couleur passe du cyan au magenta à mesure que la pression mémoire augmente — cyan à l'aise, magenta serré."
+        case .german: return "Die Farbe wechselt bei steigendem Speicherdruck von Cyan zu Magenta — Cyan entspannt, Magenta angespannt."
+        case .portuguese: return "A cor vai de ciano a magenta conforme a pressão de memória sobe — ciano folgado, magenta apertado."
+        case .russian: return "Цвет меняется с бирюзового на пурпурный при росте нагрузки на память — бирюзовый — свободно, пурпурный — напряжённо."
+        case .italian: return "Il colore passa da ciano a magenta man mano che la pressione di memoria cresce — ciano tranquillo, magenta stretto."
+        }
+    }
+
+    var loadHelpDiagnose: String {
+        switch currentLanguage {
+        case .english: return "When your Mac gets hot, tap Diagnose with AI to ask Claude what's cooking (uses your own API key)."
+        case .korean: return "맥이 뜨거워지면 AI로 원인 진단을 눌러 Claude에게 원인을 물어볼 수 있습니다 (본인 API 키 사용)."
+        case .japanese: return "Mac が熱くなったら「AI で原因を診断」を押して Claude に原因を尋ねられます(自分の API キーを使用)。"
+        case .chinese: return "Mac 变热时,点击「用 AI 诊断」向 Claude 询问原因(使用你自己的 API 密钥)。"
+        case .spanish: return "Cuando tu Mac se caliente, pulsa Diagnosticar con IA para preguntar a Claude (usa tu propia clave API)."
+        case .french: return "Quand votre Mac chauffe, appuyez sur Diagnostiquer avec IA pour interroger Claude (avec votre propre clé API)."
+        case .german: return "Wenn dein Mac heiß wird, tippe auf „Mit KI diagnostizieren“, um Claude zu fragen (nutzt deinen eigenen API-Key)."
+        case .portuguese: return "Quando seu Mac esquentar, toque em Diagnosticar com IA para perguntar ao Claude (usa sua própria chave de API)."
+        case .russian: return "Когда Mac нагреется, нажмите «Диагностика ИИ», чтобы спросить Claude (использует ваш API-ключ)."
+        case .italian: return "Quando il Mac si scalda, tocca Diagnostica con IA per chiedere a Claude (usa la tua chiave API)."
+        }
+    }
 }
 
 // Global accessor
