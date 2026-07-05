@@ -1,9 +1,11 @@
 name: Release
 
+# Manual-only. macOS 26 (Tahoe) uses Liquid Glass APIs that the GitHub
+# macos-14 runner cannot compile — every automatic tag-push run has failed.
+# Releases are cut locally via scripts/build-app.sh; this workflow is kept
+# around so we can flip it back on once a compatible runner is available.
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_dispatch:
 
 jobs:
   build:
