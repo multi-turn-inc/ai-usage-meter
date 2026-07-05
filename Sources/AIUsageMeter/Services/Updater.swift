@@ -283,6 +283,11 @@ class Updater {
             return
         }
         let latest = tagName.hasPrefix("v") ? String(tagName.dropFirst()) : tagName
+        // Downgrade guard: only proceed if latest is strictly newer than current.
+        guard compareVersions(current: currentVersion, latest: latest) else {
+            error = "No update available (latest: \(latest), current: \(currentVersion))"
+            return
+        }
         await downloadAndApply(from: json, version: latest)
     }
 

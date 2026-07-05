@@ -78,11 +78,20 @@ final class ThermalAdvisor {
         let fm = FileManager.default
         let dir = keyFileURL.deletingLastPathComponent()
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        // Lock the containing directory to the current user so nothing else can
+        // list it — the 0o600 file mode alone doesn't hide the file name.
+        try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
         if trimmed.isEmpty {
             try? fm.removeItem(at: keyFileURL)
         } else {
             try? trimmed.write(to: keyFileURL, atomically: true, encoding: .utf8)
             try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: keyFileURL.path)
+            // Keep the key out of Time Machine / iCloud Documents & Desktop
+            // backups — this is a secret, not something the user wants copied.
+            var url = keyFileURL
+            var values = URLResourceValues()
+            values.isExcludedFromBackup = true
+            try? url.setResourceValues(values)
         }
         cachedKey = trimmed
         keyLoaded = true
@@ -139,12 +148,19 @@ final class ThermalAdvisor {
         lastError = nil
         defer { isDiagnosing = false }
 
-        let samples = await Self.topCPUProcesses()
-        topProcesses = samples
+        // Fetch full list for the UI display (includes this app so users can see it).
+        let allSamples = await Self.topCPUProcesses()
+        topProcesses = allSamples
+
+        // Fetch a list without this app for the LLM so it doesn't recommend
+        // quitting the monitoring tool itself.
+        let selfPID = ProcessInfo.processInfo.processIdentifier
+        let selfName = ProcessInfo.processInfo.processName
+        let diagSamples = await Self.topCPUProcesses(excludePID: selfPID, excludeName: selfName)
         let stateLabel = Self.label(for: thermalState)
 
         do {
-            let text = try await requestDiagnosis(apiKey: key, processes: samples, thermalLabel: stateLabel)
+            let text = try await requestDiagnosis(apiKey: key, processes: diagSamples, thermalLabel: stateLabel)
             diagnosis = text
             lastDiagnosedAt = Date()
         } catch {
@@ -155,7 +171,14 @@ final class ThermalAdvisor {
     // MARK: - Telemetry (local, no root)
 
     /// Top processes by %CPU via `ps`. Names only — no arguments/paths.
-    static func topCPUProcesses(limit: Int = 6) async -> [ProcSample] {
+    /// - Parameters:
+    ///   - limit: Maximum number of samples to return.
+    ///   - excludePID: PID to exclude from results (pass self PID to prevent
+    ///     the monitoring app from appearing in its own LLM diagnosis input).
+    ///   - excludeName: Process name to exclude alongside the PID.
+    static func topCPUProcesses(limit: Int = 6,
+                                excludePID: Int32? = nil,
+                                excludeName: String? = nil) async -> [ProcSample] {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .utility).async {
                 let task = Process()
@@ -179,7 +202,11 @@ final class ThermalAdvisor {
                 for line in output.split(separator: "\n").dropFirst() {  // skip header
                     let parts = line.split(separator: " ", omittingEmptySubsequences: true)
                     guard parts.count >= 3, let cpu = Double(parts[1]) else { continue }
+                    // Exclude this monitoring app from the sample list so the LLM
+                    // does not diagnose or recommend quitting it.
+                    if let pid = excludePID, let linePID = Int32(parts[0]), linePID == pid { continue }
                     let name = parts[2...].joined(separator: " ")
+                    if let exName = excludeName, name == exName { continue }
                     samples.append(ProcSample(name: String(name), cpu: cpu))
                     if samples.count >= limit { break }
                 }
@@ -217,6 +244,8 @@ final class ThermalAdvisor {
         Top processes by CPU right now (a process briefly near 100% is normal):
         \(procList)
 
+        Note: the monitoring app (AIUsageMeter) that generated this list has already been \
+        excluded — do not reference or recommend quitting it.
         Note: several macOS system processes spike briefly during indexing, ML-model \
         compilation, photo analysis, or backup and then settle on their own — e.g. \
         ANECompilerService, mediaanalysisd, photoanalysisd, mds / mds_stores / mdworker, \

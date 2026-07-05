@@ -1,4 +1,5 @@
 import Foundation
+import AIUsageMeterCore
 
 class CodexClient: BaseAPIClient, AIServiceAPI {
     private let codexHome: String
@@ -371,18 +372,34 @@ class CodexClient: BaseAPIClient, AIServiceAPI {
         return CodexAuthInfo(accessToken: token, baseURL: baseURL)
     }
 
+    /// Returns true if `url` is allowed to receive the Bearer token.
+    /// Requires https and a host on the OpenAI/ChatGPT allowlist.
+    private func isAllowedBaseURL(_ url: URL) -> Bool {
+        guard url.scheme == "https", let host = url.host else { return false }
+        let allowed = ["api.openai.com", "chatgpt.com", "backend.chatgpt.com"]
+        if allowed.contains(host) { return true }
+        // *.openai.com subdomains
+        if host.hasSuffix(".openai.com") { return true }
+        return false
+    }
+
     private func buildBaseURLCandidates(authInfo: CodexAuthInfo) -> [URL] {
         var candidates: [URL] = []
         var seen = Set<String>()
 
         if let baseURL = authInfo.baseURL {
-            candidates.append(baseURL)
-            seen.insert(baseURL.absoluteString)
+            if isAllowedBaseURL(baseURL), !seen.contains(baseURL.absoluteString) {
+                candidates.append(baseURL)
+                seen.insert(baseURL.absoluteString)
+            }
+            // Non-allowed custom URLs are silently ignored; fall through to defaults.
         }
 
-        if let configURL = loadCodexBaseURLFromConfig(), !seen.contains(configURL.absoluteString) {
-            candidates.append(configURL)
-            seen.insert(configURL.absoluteString)
+        if let configURL = loadCodexBaseURLFromConfig() {
+            if isAllowedBaseURL(configURL), !seen.contains(configURL.absoluteString) {
+                candidates.append(configURL)
+                seen.insert(configURL.absoluteString)
+            }
         }
 
         let defaults = ["https://api.openai.com", "https://chatgpt.com"]

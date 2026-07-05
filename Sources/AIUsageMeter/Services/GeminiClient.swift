@@ -130,10 +130,17 @@ class GeminiClient: BaseAPIClient, AIServiceAPI {
     }
     
     private func extractClientCredentials() -> (clientId: String, clientSecret: String) {
-        let whichResult = try? shellSync("which gemini")
-        if let path = whichResult?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !path.isEmpty {
-            let resolved = (try? shellSync("readlink -f '\(path)'"))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? path
+        // Fixed candidate binary paths — avoids PATH hijacking and shell string interpolation.
+        let geminiCandidates = [
+            "/opt/homebrew/bin/gemini",
+            "/usr/local/bin/gemini",
+            (NSHomeDirectory() as NSString).appendingPathComponent(".local/bin/gemini"),
+        ]
+
+        for binaryPath in geminiCandidates {
+            guard FileManager.default.fileExists(atPath: binaryPath) else { continue }
+            // Resolve symlinks via Foundation — no shell interpolation.
+            let resolved = URL(fileURLWithPath: binaryPath).resolvingSymlinksInPath().path
             let binDir = (resolved as NSString).deletingLastPathComponent
             let libDir = (binDir as NSString).deletingLastPathComponent
 
@@ -151,6 +158,7 @@ class GeminiClient: BaseAPIClient, AIServiceAPI {
             }
         }
 
+        // Fallback: well-known absolute paths for Homebrew global installs.
         let fallbackPaths = [
             "/opt/homebrew/lib/node_modules/@google/gemini-cli/node_modules/@google/gemini-cli-core/dist/src/code_assist/oauth2.js",
             "/usr/local/lib/node_modules/@google/gemini-cli/node_modules/@google/gemini-cli-core/dist/src/code_assist/oauth2.js",
@@ -160,6 +168,40 @@ class GeminiClient: BaseAPIClient, AIServiceAPI {
             if FileManager.default.fileExists(atPath: path),
                let creds = parseOAuth2JS(at: path) {
                 return creds
+            }
+        }
+
+        // Last resort: locate gemini via PATH-fixed which(1) invocation.
+        let task = Process()
+        task.launchPath = "/bin/bash"
+        task.arguments = ["-c", "which gemini"]
+        task.environment = ["PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"]
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = Pipe()
+        task.standardInput = nil
+        if (try? task.run()) != nil {
+            task.waitUntilExit()
+            let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            let rawPath = output.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !rawPath.isEmpty {
+                // Resolve symlinks via Foundation — no shell interpolation.
+                let resolved = URL(fileURLWithPath: rawPath).resolvingSymlinksInPath().path
+                let binDir = (resolved as NSString).deletingLastPathComponent
+                let libDir = (binDir as NSString).deletingLastPathComponent
+
+                let candidatePaths = [
+                    "\(libDir)/node_modules/@google/gemini-cli-core/dist/src/code_assist/oauth2.js",
+                    "\(libDir)/src/code_assist/oauth2.js",
+                    "\(libDir)/lib/oauth2.js",
+                ]
+
+                for candidate in candidatePaths {
+                    if FileManager.default.fileExists(atPath: candidate),
+                       let creds = parseOAuth2JS(at: candidate) {
+                        return creds
+                    }
+                }
             }
         }
 
@@ -206,6 +248,8 @@ class GeminiClient: BaseAPIClient, AIServiceAPI {
         
         if let updatedData = try? JSONSerialization.data(withJSONObject: json, options: .prettyPrinted) {
             try? updatedData.write(to: URL(fileURLWithPath: credPath))
+            // Restrict credential file to owner-read/write only (0o600).
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: credPath)
         }
     }
     
@@ -354,17 +398,4 @@ class GeminiClient: BaseAPIClient, AIServiceAPI {
         )
     }
     
-    private func shellSync(_ command: String) throws -> String {
-        let task = Process()
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = pipe
-        task.arguments = ["-c", command]
-        task.launchPath = "/bin/bash"
-        task.standardInput = nil
-        try task.run()
-        task.waitUntilExit()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        return String(data: data, encoding: .utf8) ?? ""
-    }
 }

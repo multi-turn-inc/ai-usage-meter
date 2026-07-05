@@ -554,6 +554,9 @@ extension KeychainManager {
             try fileManager.createDirectory(at: parent, withIntermediateDirectories: true)
         }
         try data.write(to: url, options: .atomic)
+        // Restrict credential file to owner-read/write only (0o600).
+        // Never touch the parent directory — it is owned by Claude Code CLI.
+        try? fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 }
 
