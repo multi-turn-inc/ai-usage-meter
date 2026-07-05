@@ -255,6 +255,12 @@ class KeychainManager {
     }
 
     private func fetchClaudeCodeCredentialRecords(service: String, allowInteraction: Bool) -> [ClaudeCodeCredentialsRecord] {
+        // Reading the item's secret triggers the legacy keychain ACL dialog
+        // ("wants to use your confidential information") whenever this app is not
+        // on the item's ACL. Background/auto refreshes must never pop that dialog,
+        // so only user-initiated flows may read keychain secrets at all.
+        guard allowInteraction else { return [] }
+
         let attrsQuery = keychainQuery([
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -329,19 +335,20 @@ class KeychainManager {
     }
 
     private func keychainQuery(_ base: [String: Any], allowInteraction: Bool) -> [String: Any] {
-        // Always read non-interactively, regardless of the caller's hint. The
-        // "Claude Code-credentials" item is owned by Claude Code; our ad-hoc-signed
-        // binary isn't on its Keychain ACL, so an interactive read pops the login
-        // password prompt on every token refresh — and "Always Allow" never sticks,
-        // because an ad-hoc signature has no stable designated requirement to bind
-        // the ACL to. The on-disk credential file (~/.claude/.credentials.json) is
-        // the source of truth; the Keychain is a best-effort read-only fallback for
-        // the case where no file exists yet.
-        _ = allowInteraction
+        // Note: LAContext.interactionNotAllowed only suppresses LocalAuthentication
+        // UI (Touch ID / password sheets for access-control items). It does NOT
+        // suppress securityd's legacy ACL dialog for login-keychain items — that
+        // one is avoided by not reading secrets at all on non-interactive paths
+        // (see fetchClaudeCodeCredentialRecords). For interactive reads we leave
+        // the query untouched so the user can grant "Always Allow" once; the
+        // standalone binary is Developer ID-signed, so that grant now survives
+        // updates (an ad-hoc signature would invalidate it on every build).
         var query = base
-        let context = LAContext()
-        context.interactionNotAllowed = true
-        query[kSecUseAuthenticationContext as String] = context
+        if !allowInteraction {
+            let context = LAContext()
+            context.interactionNotAllowed = true
+            query[kSecUseAuthenticationContext as String] = context
+        }
         return query
     }
 }

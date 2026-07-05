@@ -202,13 +202,22 @@ echo "✅ DMG created: $DMG_PATH"
 INSTALL_DIR="$HOME/Library/Application Support/TokenBurn"
 mkdir -p "$INSTALL_DIR"
 cp "$BUILD_DIR/AIUsageMeter" "$INSTALL_DIR/"
-# launchd validates restarts against the service's registered code-signing
-# identity; a swapped binary must get a fresh ad-hoc signature and the agent
-# re-bootstrapped, or kickstart dies with OS_REASON_CODESIGNING.
-codesign --force --sign - "$INSTALL_DIR/AIUsageMeter"
 if [ -d "$BUILD_DIR/Sparkle.framework" ]; then
     rm -rf "$INSTALL_DIR/Sparkle.framework"
     cp -R "$BUILD_DIR/Sparkle.framework" "$INSTALL_DIR/"
+fi
+# launchd validates restarts against the service's registered code-signing
+# identity; a swapped binary must be re-signed and the agent re-bootstrapped,
+# or kickstart dies with OS_REASON_CODESIGNING.
+# Prefer Developer ID: keychain "Always Allow" grants bind to the signature's
+# designated requirement, so a stable identity keeps them across updates —
+# ad-hoc signatures change every build and re-trigger the ACL prompt.
+# (No --options runtime here: hardened-runtime library validation would reject
+# the separately-signed Sparkle.framework.)
+if security find-identity -v -p codesigning 2>/dev/null | grep -q "$TEAM_ID"; then
+    codesign --force --timestamp --identifier com.aiusagemeter --sign "$SIGNING_IDENTITY" "$INSTALL_DIR/AIUsageMeter"
+else
+    codesign --force --sign - "$INSTALL_DIR/AIUsageMeter"
 fi
 
 # Install LaunchAgent
