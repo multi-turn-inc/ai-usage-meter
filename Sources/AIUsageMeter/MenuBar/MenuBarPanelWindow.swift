@@ -28,7 +28,7 @@ final class MenuBarPanelWindow<Content: View>: NSPanel {
 
     private var rootView: some View {
         content()
-            .modifier(RootViewModifier(windowTitle: title))
+            .modifier(RootViewModifier(windowTitle: title, maxContentHeight: maxPanelHeight))
             .onSizeUpdate { [weak self] size in
                 self?.contentSizeDidUpdate(to: size)
             }

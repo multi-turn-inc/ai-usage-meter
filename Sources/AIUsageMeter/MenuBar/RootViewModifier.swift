@@ -6,11 +6,16 @@ struct RootViewModifier: ViewModifier {
     @State private var scenePhase: ScenePhase = .background
 
     let windowTitle: String
+    let maxContentHeight: CGFloat
 
     func body(content: Content) -> some View {
         content
             .environment(\.scenePhase, scenePhase)
             .edgesIgnoringSafeArea(.all)
+            // Cap the ideal height so inner ScrollViews are proposed the cap and
+            // actually scroll; without this, .fixedSize() lays content out at full
+            // ideal height and everything past the window clamp is clipped.
+            .frame(maxHeight: maxContentHeight, alignment: .top)
             .background(
                 GeometryReader { geometry in
                     Color.clear
