@@ -778,6 +778,21 @@ class LocalizationManager {
         }
     }
 
+    var topMemory: String {
+        switch currentLanguage {
+        case .english: return "Top Memory"
+        case .korean: return "메모리 상위"
+        case .japanese: return "メモリ上位"
+        case .chinese: return "内存占用"
+        case .spanish: return "Mayor memoria"
+        case .french: return "Top mémoire"
+        case .german: return "Top-Speicher"
+        case .portuguese: return "Maior memória"
+        case .russian: return "Топ памяти"
+        case .italian: return "Top memoria"
+        }
+    }
+
     var loadTab: String {
         switch currentLanguage {
         case .english: return "System load tab"

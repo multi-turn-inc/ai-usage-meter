@@ -11,7 +11,8 @@ struct LoadView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 loadGauge
-                processList
+                cpuProcessList
+                memoryProcessList
                 Divider().opacity(0.2)
                 aiSection
             }
@@ -66,17 +67,17 @@ struct LoadView: View {
         }
     }
 
-    // MARK: process list
+    // MARK: process lists
 
     @ViewBuilder
-    private var processList: some View {
+    private var cpuProcessList: some View {
         if !advisor.topProcesses.isEmpty {
             VStack(spacing: 3) {
                 Text(L.topCPU)
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.tertiary)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                ForEach(advisor.topProcesses) { p in
+                ForEach(advisor.topProcesses.prefix(3)) { p in
                     HStack {
                         Text(p.name)
                             .font(.system(size: 11))
@@ -85,7 +86,31 @@ struct LoadView: View {
                         Spacer()
                         Text("\(Int(p.cpu.rounded()))%")
                             .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            .foregroundStyle(p.cpu >= 50 ? Color.orange : Color.secondary)
+                            .foregroundStyle(p.cpu >= 50 ? Color.pink : Color.secondary)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var memoryProcessList: some View {
+        if !advisor.topMemoryProcesses.isEmpty {
+            VStack(spacing: 3) {
+                Text(L.topMemory)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                ForEach(advisor.topMemoryProcesses.prefix(3)) { m in
+                    HStack {
+                        Text(m.name)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        Spacer()
+                        Text(ThermalAdvisor.formatBytes(m.rssBytes))
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(.secondary)
                     }
                 }
             }
@@ -118,7 +143,7 @@ struct LoadView: View {
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "sparkles")
                         .font(.system(size: 11))
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(.pink)
                     Text(diagnosis)
                         .font(.system(size: 11))
                         .fixedSize(horizontal: false, vertical: true)
@@ -127,7 +152,7 @@ struct LoadView: View {
                 .padding(8)
                 .background(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color.orange.opacity(0.08))
+                        .fill(Color.pink.opacity(0.08))
                 )
             }
             if let err = advisor.lastError {

@@ -18,6 +18,7 @@ final class ThermalAdvisor {
     var thermalState: ProcessInfo.ThermalState = .nominal
     var diagnosis: String?          // LLM cause + recommendation
     var topProcesses: [ProcSample] = []
+    var topMemoryProcesses: [MemSample] = []
     var isDiagnosing = false
     var lastDiagnosedAt: Date?
     var lastError: String?
@@ -26,6 +27,12 @@ final class ThermalAdvisor {
         let id = UUID()
         let name: String
         let cpu: Double
+    }
+
+    struct MemSample: Identifiable {
+        let id = UUID()
+        let name: String
+        let rssBytes: UInt64
     }
 
     // MARK: Settings (persisted)
@@ -128,7 +135,10 @@ final class ThermalAdvisor {
     /// while the panel is open.
     func sampleNow() async {
         thermalState = ProcessInfo.processInfo.thermalState
-        topProcesses = await Self.topCPUProcesses()
+        async let cpu = Self.topCPUProcesses()
+        async let mem = Self.topMemoryProcesses()
+        topProcesses = await cpu
+        topMemoryProcesses = await mem
     }
 
     /// Manual "diagnose now" — explicit user action counts as consent, so it only
@@ -149,8 +159,11 @@ final class ThermalAdvisor {
         defer { isDiagnosing = false }
 
         // Fetch full list for the UI display (includes this app so users can see it).
-        let allSamples = await Self.topCPUProcesses()
+        async let cpuAll = Self.topCPUProcesses()
+        async let memAll = Self.topMemoryProcesses()
+        let allSamples = await cpuAll
         topProcesses = allSamples
+        topMemoryProcesses = await memAll
 
         // Fetch a list without this app for the LLM so it doesn't recommend
         // quitting the monitoring tool itself.
@@ -212,6 +225,53 @@ final class ThermalAdvisor {
                 }
                 continuation.resume(returning: samples)
             }
+        }
+    }
+
+    /// Top processes by resident memory via `ps`. Names + RSS in bytes.
+    /// GPU per-process is intentionally omitted: macOS exposes GPU utilization
+    /// only at the device level (IOAccelerator) without a private/root API,
+    /// and heavy GPU workloads reliably show up on the CPU list already.
+    static func topMemoryProcesses(limit: Int = 6) async -> [MemSample] {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                let task = Process()
+                task.executableURL = URL(fileURLWithPath: "/bin/ps")
+                // rss is in KiB on macOS; -m sorts by rss desc.
+                task.arguments = ["-Aceo", "pid,rss,comm", "-m"]
+                task.environment = ["LC_ALL": "C"]
+                let pipe = Pipe()
+                task.standardOutput = pipe
+                task.standardError = FileHandle.nullDevice
+                guard (try? task.run()) != nil else {
+                    continuation.resume(returning: [])
+                    return
+                }
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                task.waitUntilExit()
+                let output = String(data: data, encoding: .utf8) ?? ""
+
+                var samples: [MemSample] = []
+                for line in output.split(separator: "\n").dropFirst() {
+                    let parts = line.split(separator: " ", omittingEmptySubsequences: true)
+                    guard parts.count >= 3, let rssKiB = UInt64(parts[1]) else { continue }
+                    let name = parts[2...].joined(separator: " ")
+                    samples.append(MemSample(name: String(name), rssBytes: rssKiB * 1024))
+                    if samples.count >= limit { break }
+                }
+                continuation.resume(returning: samples)
+            }
+        }
+    }
+
+    static func formatBytes(_ bytes: UInt64) -> String {
+        let mb = Double(bytes) / (1024 * 1024)
+        if mb >= 1024 {
+            return String(format: "%.1f GB", mb / 1024)
+        } else if mb >= 100 {
+            return String(format: "%.0f MB", mb)
+        } else {
+            return String(format: "%.1f MB", mb)
         }
     }
 
