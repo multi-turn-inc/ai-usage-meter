@@ -25,7 +25,7 @@ Agent sessions quietly eat through your 5-hour and weekly quotas while you work 
 
 ## In the Menu Bar
 
-<img src="docs/screenshot-menubar.png" width="200" alt="Menu Bar">
+<img src="docs/menubar-live.gif" width="240" alt="Menu bar cells pulsing while agents burn tokens">
 
 Each service cell encodes two things at once:
 
@@ -41,6 +41,10 @@ While an agent is actively calling APIs, the bars pulse with a heartbeat animati
 - **System Load tab** — CPU × GPU gauge with RAM as color, top processes, and a glanceable heat strip on the main panel
 - **Heat advisor** *(optional)* — when your Mac runs hot, sends the top CPU process names to Claude using **your own** Anthropic API key and tells you what's cooking
 - **Staleness flags** — warns when a service stopped reporting fresh data
+
+<div align="center">
+<img src="docs/screenshot-load.png" width="280" alt="System Load tab with AI heat diagnosis">
+</div>
 
 ## Install
 
