@@ -10,6 +10,10 @@ SIGNING_IDENTITY="${SIGNING_IDENTITY:-Developer ID Application: Multi-turn Inc. 
 TEAM_ID="${TEAM_ID:-8V3Z27Z6RY}"
 APPLE_ID="${APPLE_ID:-}"
 APPLE_APP_SPECIFIC_PASSWORD="${APPLE_APP_SPECIFIC_PASSWORD:-}"
+# Alternative to APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD: a keychain profile
+# stored via `xcrun notarytool store-credentials <profile>`. Avoids passing an
+# app-specific password on every build.
+NOTARY_KEYCHAIN_PROFILE="${NOTARY_KEYCHAIN_PROFILE:-}"
 NOTARIZE="${NOTARIZE:-}"
 RESEND_API_KEY="${RESEND_API_KEY:-}"
 FEEDBACK_EMAIL="${FEEDBACK_EMAIL:-}"
@@ -166,22 +170,29 @@ echo "🔐 Signing DMG..."
 codesign --force --timestamp --sign "$SIGNING_IDENTITY" "$DMG_PATH"
 echo "✅ DMG signed successfully"
 
-if [[ "$NOTARIZE" == "1" || "$NOTARIZE" == "true" || ( -n "$APPLE_ID" && -n "$APPLE_APP_SPECIFIC_PASSWORD" ) ]]; then
-    if [[ -z "$APPLE_ID" || -z "$APPLE_APP_SPECIFIC_PASSWORD" ]]; then
+if [[ "$NOTARIZE" == "1" || "$NOTARIZE" == "true" || -n "$NOTARY_KEYCHAIN_PROFILE" || ( -n "$APPLE_ID" && -n "$APPLE_APP_SPECIFIC_PASSWORD" ) ]]; then
+    echo "🧾 Notarizing DMG with Apple Notary Service..."
+    if [ -n "$NOTARY_KEYCHAIN_PROFILE" ]; then
+        # Uses credentials pre-stored via `xcrun notarytool store-credentials`.
+        xcrun notarytool submit "$DMG_PATH" \
+            --keychain-profile "$NOTARY_KEYCHAIN_PROFILE" \
+            --wait
+    elif [[ -n "$APPLE_ID" && -n "$APPLE_APP_SPECIFIC_PASSWORD" ]]; then
+        xcrun notarytool submit "$DMG_PATH" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$TEAM_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --wait
+    else
         echo "❌ NOTARIZE requested but missing credentials."
-        echo "   Set env vars:"
-        echo "   - APPLE_ID"
-        echo "   - APPLE_APP_SPECIFIC_PASSWORD (App-Specific Password)"
-        echo "   - TEAM_ID (optional, default: $TEAM_ID)"
+        echo "   Provide either:"
+        echo "     NOTARY_KEYCHAIN_PROFILE=<stored profile name>   (preferred)"
+        echo "   OR:"
+        echo "     APPLE_ID=<apple id>"
+        echo "     APPLE_APP_SPECIFIC_PASSWORD=<app-specific password>"
+        echo "     TEAM_ID=<team id>  (optional, default: $TEAM_ID)"
         exit 1
     fi
-
-    echo "🧾 Notarizing DMG with Apple Notary Service..."
-    xcrun notarytool submit "$DMG_PATH" \
-        --apple-id "$APPLE_ID" \
-        --team-id "$TEAM_ID" \
-        --password "$APPLE_APP_SPECIFIC_PASSWORD" \
-        --wait
 
     echo "📎 Stapling notarization ticket..."
     xcrun stapler staple "$DMG_PATH"
