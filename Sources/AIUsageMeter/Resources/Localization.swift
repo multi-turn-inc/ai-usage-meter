@@ -793,6 +793,21 @@ class LocalizationManager {
         }
     }
 
+    var openActivityMonitor: String {
+        switch currentLanguage {
+        case .english: return "Open Activity Monitor for details"
+        case .korean: return "활성 상태 보기에서 자세히 확인"
+        case .japanese: return "アクティビティモニタで詳細を確認"
+        case .chinese: return "在活动监视器中查看详情"
+        case .spanish: return "Abrir el Monitor de Actividad para más detalles"
+        case .french: return "Ouvrir le Moniteur d'activité pour plus de détails"
+        case .german: return "Aktivitätsanzeige für Details öffnen"
+        case .portuguese: return "Abrir o Monitor de Atividade para detalhes"
+        case .russian: return "Открыть Мониторинг системы для подробностей"
+        case .italian: return "Apri Monitoraggio Attività per i dettagli"
+        }
+    }
+
     var loadTab: String {
         switch currentLanguage {
         case .english: return "System load tab"

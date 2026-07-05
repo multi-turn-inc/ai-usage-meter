@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The "Load" tab detail: simple CPU / GPU / RAM bars, the top-CPU process list,
@@ -69,51 +70,78 @@ struct LoadView: View {
 
     // MARK: process lists
 
+    /// Clicking any row or the header opens Activity Monitor. Activity Monitor
+    /// has no URL scheme, so we can't pre-select a process — but launching the
+    /// app is enough to satisfy the "show me more" instinct without any
+    /// automation prompts.
+    private func openActivityMonitor() {
+        guard let url = NSWorkspace.shared.urlForApplication(
+            withBundleIdentifier: "com.apple.ActivityMonitor"
+        ) else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    private func listHeader(_ title: String) -> some View {
+        HStack(spacing: 4) {
+            Text(title)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.tertiary)
+            Image(systemName: "arrow.up.forward")
+                .font(.system(size: 8, weight: .semibold))
+                .foregroundStyle(.tertiary)
+            Spacer()
+        }
+    }
+
     @ViewBuilder
     private var cpuProcessList: some View {
         if !advisor.topProcesses.isEmpty {
-            VStack(spacing: 3) {
-                Text(L.topCPU)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.tertiary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                ForEach(advisor.topProcesses.prefix(3)) { p in
-                    HStack {
-                        Text(p.name)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                        Spacer()
-                        Text("\(Int(p.cpu.rounded()))%")
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            .foregroundStyle(p.cpu >= 50 ? Color.pink : Color.secondary)
+            Button(action: openActivityMonitor) {
+                VStack(spacing: 3) {
+                    listHeader(L.topCPU)
+                    ForEach(advisor.topProcesses.prefix(3)) { p in
+                        HStack {
+                            Text(p.name)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                            Spacer()
+                            Text("\(Int(p.cpu.rounded()))%")
+                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .foregroundStyle(p.cpu >= 50 ? Color.pink : Color.secondary)
+                        }
                     }
                 }
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .help(L.openActivityMonitor)
         }
     }
 
     @ViewBuilder
     private var memoryProcessList: some View {
         if !advisor.topMemoryProcesses.isEmpty {
-            VStack(spacing: 3) {
-                Text(L.topMemory)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.tertiary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                ForEach(advisor.topMemoryProcesses.prefix(3)) { m in
-                    HStack {
-                        Text(m.name)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                        Spacer()
-                        Text(ThermalAdvisor.formatBytes(m.rssBytes))
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            .foregroundStyle(.secondary)
+            Button(action: openActivityMonitor) {
+                VStack(spacing: 3) {
+                    listHeader(L.topMemory)
+                    ForEach(advisor.topMemoryProcesses.prefix(3)) { m in
+                        HStack {
+                            Text(m.name)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                            Spacer()
+                            Text(ThermalAdvisor.formatBytes(m.rssBytes))
+                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .help(L.openActivityMonitor)
         }
     }
 
