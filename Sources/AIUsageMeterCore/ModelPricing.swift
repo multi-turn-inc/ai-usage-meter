@@ -2,16 +2,16 @@ import Foundation
 
 /// Per-model USD rates (per 1M tokens). Used to estimate what local usage would
 /// cost at API prices — subscription users see it as "API value", not a bill.
-struct ModelRates {
-    let input: Double
-    let output: Double
-    var cacheRead: Double = 0
-    var cacheWrite5m: Double = 0
-    var cacheWrite1h: Double = 0
+public struct ModelRates {
+    public let input: Double
+    public let output: Double
+    public var cacheRead: Double = 0
+    public var cacheWrite5m: Double = 0
+    public var cacheWrite1h: Double = 0
 }
 
-final class ModelPricing: Sendable {
-    static let shared = ModelPricing()
+public final class ModelPricing: Sendable {
+    public static let shared = ModelPricing()
 
     /// Rate snapshot from LiteLLM's model_prices_and_context_window.json (2026-06-10).
     /// Compiled in rather than bundled as a resource: the SwiftPM resource bundle is
@@ -69,7 +69,7 @@ final class ModelPricing: Sendable {
         prefixKeys = models.keys.sorted { $0.count > $1.count }
     }
 
-    func rates(for model: String?) -> ModelRates? {
+    public func rates(for model: String?) -> ModelRates? {
         guard var name = model?.lowercased().trimmingCharacters(in: .whitespaces), !name.isEmpty else {
             return nil
         }
@@ -90,7 +90,7 @@ final class ModelPricing: Sendable {
     }
 
     /// Anthropic usage reports uncached input, cache writes, and cache reads separately.
-    func claudeCost(
+    public func claudeCost(
         model: String?,
         input: Int64, output: Int64,
         cacheWrite5m: Int64, cacheWrite1h: Int64, cacheRead: Int64
@@ -107,7 +107,7 @@ final class ModelPricing: Sendable {
 
     /// OpenAI usage reports input *including* the cached portion; cached tokens
     /// bill at the cache-read rate instead of the input rate.
-    func codexCost(model: String?, input: Int64, cachedInput: Int64, output: Int64) -> Double {
+    public func codexCost(model: String?, input: Int64, cachedInput: Int64, output: Int64) -> Double {
         guard let r = rates(for: model) else { return 0 }
         let cached = min(max(cachedInput, 0), max(input, 0))
         let cost = Double(input - cached) * r.input

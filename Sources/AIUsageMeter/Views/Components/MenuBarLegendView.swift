@@ -1,4 +1,5 @@
 import SwiftUI
+import AIUsageMeterCore
 
 struct MenuBarLegendDiagram: View {
     var fiveHourRemaining: Double = 0.7

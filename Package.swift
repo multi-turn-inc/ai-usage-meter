@@ -10,16 +10,25 @@ let package = Package(
         .executable(
             name: "AIUsageMeter",
             targets: ["AIUsageMeter"]
-        )
+        ),
+        .library(
+            name: "AIUsageMeterCore",
+            targets: ["AIUsageMeterCore"]
+        ),
     ],
     dependencies: [
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.8.1"),
     ],
     targets: [
+        .target(
+            name: "AIUsageMeterCore",
+            path: "Sources/AIUsageMeterCore"
+        ),
         .executableTarget(
             name: "AIUsageMeter",
             dependencies: [
                 .product(name: "Sparkle", package: "Sparkle"),
+                "AIUsageMeterCore",
             ],
             path: "Sources/AIUsageMeter",
             resources: [
@@ -29,6 +38,11 @@ let package = Package(
             swiftSettings: [
                 .define("ENABLE_SPARKLE"),
             ]
-        )
+        ),
+        .testTarget(
+            name: "AIUsageMeterTests",
+            dependencies: ["AIUsageMeterCore"],
+            path: "Tests/AIUsageMeterTests"
+        ),
     ]
 )

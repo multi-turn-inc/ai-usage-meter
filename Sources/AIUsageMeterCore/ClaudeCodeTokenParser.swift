@@ -2,11 +2,11 @@ import Foundation
 
 /// Parses Claude Code JSONL session logs from ~/.claude/projects/ and
 /// aggregates token usage per message timestamp (not per session).
-final class ClaudeCodeTokenParser {
-    static let shared = ClaudeCodeTokenParser()
+public final class ClaudeCodeTokenParser {
+    public static let shared = ClaudeCodeTokenParser()
 
     private let fileManager = FileManager.default
-    private let baseDir: URL
+    let baseDir: URL   // internal for testing
     private let dayFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd"
@@ -25,9 +25,15 @@ final class ClaudeCodeTokenParser {
             .appendingPathComponent(".claude/projects")
     }
 
+    /// Testing initializer — injects an arbitrary root directory instead of ~/.claude/projects.
+    /// Not intended for production use.
+    init(baseDirForTesting: URL) {
+        baseDir = baseDirForTesting
+    }
+
     // MARK: - Public
 
-    func parse(days: Int = 7) -> TokenUsageSummary {
+    public func parse(days: Int = 7) -> TokenUsageSummary {
         let cutoff = Calendar.current.date(byAdding: .day, value: -days, to: Date()) ?? Date()
         let jsonlFiles = findJSONLFiles(modifiedAfter: cutoff)
 

@@ -1,4 +1,5 @@
 import Foundation
+import AIUsageMeterCore
 
 class DataStore {
     static let shared = DataStore()

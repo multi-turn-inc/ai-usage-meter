@@ -1,4 +1,5 @@
 import Foundation
+import AIUsageMeterCore
 
 /// Merges Codex token usage into the shared daily/hourly chart buckets.
 /// Data comes from CodexSessionParser (session rollout files with per-turn

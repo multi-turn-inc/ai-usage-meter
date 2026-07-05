@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import AIUsageMeterCore
 
 struct ServiceConfig: Codable, Identifiable {
     let id: UUID
@@ -33,6 +34,12 @@ struct ServiceConfig: Codable, Identifiable {
 
     var brandColor: Color {
         Color(hex: serviceType.brandColorHex) ?? .blue
+    }
+}
+
+extension ServiceType {
+    var brandColor: Color {
+        Color(hex: brandColorHex) ?? .blue
     }
 }
 

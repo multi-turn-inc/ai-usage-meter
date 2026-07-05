@@ -1,4 +1,5 @@
 import SwiftUI
+import AIUsageMeterCore
 
 struct UsageHistoryView: View {
     let serviceType: ServiceType

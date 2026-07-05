@@ -1,4 +1,5 @@
 import Foundation
+import AIUsageMeterCore
 
 struct UsageData: Codable, Equatable {
     let tokensUsed: Int64

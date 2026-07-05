@@ -1,4 +1,5 @@
 import Foundation
+import AIUsageMeterCore
 
 struct UsageHistoryEntry: Codable, Identifiable {
     let id: UUID
