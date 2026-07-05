@@ -2,7 +2,9 @@ import Foundation
 import SwiftUI
 import Combine
 import ServiceManagement
+import AIUsageMeterCore
 
+@MainActor
 @Observable
 class AppState {
     var services: [ServiceViewModel] = []
@@ -65,9 +67,11 @@ class AppState {
     }
 
     deinit {
-        stopAutoRefreshTimer()
-        stopProcessMonitor()
-        stopCredentialFileWatcher()
+        // AppState is owned by AppDelegate for the app lifetime, so this only
+        // fires on process teardown when the OS reclaims resources anyway.
+        // Timers/dispatch sources are cancelled on release; nothing to do here
+        // (touching MainActor-isolated state from a nonisolated deinit would
+        // race under Swift 6).
     }
 
     // MARK: - Auto Refresh Timer
@@ -83,7 +87,7 @@ class AppState {
         print("⏰ Starting auto-refresh timer: \(Int(refreshInterval))s interval")
 
         refreshTimer = Timer.scheduledTimer(withTimeInterval: refreshInterval, repeats: true) { [weak self] _ in
-            Task { [weak self] in
+            Task { @MainActor in
                 await self?.refresh(interactive: false)
             }
         }
@@ -172,7 +176,12 @@ class AppState {
     func dismissMenuBarLegendOnboarding() {
         AppDefaults.userDefaults.set(true, forKey: OnboardingDefaults.didDismissMenuBarLegend)
         showMenuBarLegendOnboarding = false
-        startRefreshWorkflowIfNeeded()
+        // Same rule as init(): if there's no credential file yet, the first
+        // refresh has to be interactive so Keychain can restore it. Without
+        // this recheck a fresh user would get a silent non-interactive refresh
+        // and stay stuck on "Loading" until the next 5-min cycle.
+        let needsInteractive = !KeychainManager.shared.hasCredentialFile()
+        startRefreshWorkflowIfNeeded(interactive: needsInteractive)
     }
 
     private func startRefreshWorkflowIfNeeded(interactive: Bool = false) {
@@ -184,12 +193,11 @@ class AppState {
         }
         startCredentialFileWatcher()
 
-        Task {
+        // Already on MainActor via the class isolation; no extra hop needed.
+        Task { @MainActor in
             try? await Task.sleep(nanoseconds: 500_000_000)
             await refresh(interactive: interactive)
-            await MainActor.run {
-                startAutoRefreshTimer()
-            }
+            startAutoRefreshTimer()
         }
     }
 
@@ -233,7 +241,9 @@ class AppState {
 
         source.setEventHandler { [weak self] in
             print("🔑 Credential file changed: \(path)")
-            self?.onCredentialFileChanged()
+            Task { @MainActor in
+                self?.onCredentialFileChanged()
+            }
         }
 
         source.setCancelHandler {
@@ -256,7 +266,9 @@ class AppState {
 
         source.setEventHandler { [weak self] in
             print("🔑 Credential directory changed: \(path)")
-            self?.onCredentialFileChanged()
+            Task { @MainActor in
+                self?.onCredentialFileChanged()
+            }
         }
 
         source.setCancelHandler {
@@ -272,9 +284,9 @@ class AppState {
         let work = DispatchWorkItem { [weak self] in
             print("🔄 Credential change detected → refreshing...")
             KeychainManager.shared.clearCredentialsCache()
-            Task {
-                // Use interactive: true so Keychain can restore the credential
-                // file if it was deleted (e.g. by Claude Code token refresh).
+            // Use interactive: true so Keychain can restore the credential
+            // file if it was deleted (e.g. by Claude Code token refresh).
+            Task { @MainActor in
                 await self?.refresh(interactive: true)
             }
         }
@@ -340,49 +352,56 @@ class AppState {
     }
 
     func refresh(interactive: Bool) async {
-        let shouldStart = await MainActor.run { () -> Bool in
-            if isRefreshing {
-                print("⏳ Refresh already in progress, skipping")
-                return false
-            }
-            isRefreshing = true
-            return true
+        if isRefreshing {
+            print("⏳ Refresh already in progress, skipping")
+            return
         }
-        guard shouldStart else { return }
-        defer {
-            Task { @MainActor in
-                isRefreshing = false
-            }
-        }
+        isRefreshing = true
+        defer { isRefreshing = false }
 
         print("🔄 Starting refresh...")
 
-        await MainActor.run {
-            for service in services where service.config.isEnabled {
-                service.snapshotBeforeRefresh()
-            }
+        for service in services where service.config.isEnabled {
+            service.snapshotBeforeRefresh()
         }
 
-        let results = await withTaskGroup(of: (Int, String, Result<UsageData, Error>).self) { group in
-            for (index, service) in services.enumerated() {
-                guard service.config.isEnabled else {
-                    print("⏭️ Skipping disabled service: \(service.name)")
-                    continue
-                }
-                let serviceName = service.name
-                print("📡 Fetching: \(serviceName)")
+        // Build the client list on the main actor (needs isEnabled/config),
+        // then hand each client off to a detached task so URLSession + Keychain
+        // I/O never blocks the UI. `AIServiceAPI` isn't Sendable, but each
+        // client is used by exactly one task and never touched again from
+        // MainActor, so isolated ownership is safe.
+        struct Job {
+            let index: Int
+            let name: String
+            let client: AIServiceAPI
+        }
+        let jobs: [Job] = services.enumerated().compactMap { (index, service) in
+            guard service.config.isEnabled else {
+                print("⏭️ Skipping disabled service: \(service.name)")
+                return nil
+            }
+            print("📡 Fetching: \(service.name)")
+            return Job(
+                index: index,
+                name: service.name,
+                client: Self.createAPIClient(for: service.config, interactive: interactive)
+            )
+        }
 
+        let results: [(Int, String, Result<UsageData, Error>)] = await withTaskGroup(
+            of: (Int, String, Result<UsageData, Error>).self
+        ) { group in
+            for job in jobs {
                 group.addTask {
+                    // Credential cache is cleared by file watcher on account switch,
+                    // no need to clear on every refresh.
                     do {
-                        // Credential cache is cleared by file watcher on account switch,
-                        // no need to clear on every refresh.
-                        let client = self.createAPIClient(for: service.config, interactive: interactive)
-                        let usage = try await client.fetchUsage()
-                        print("✅ \(serviceName): \(usage.usagePercentage)%")
-                        return (index, serviceName, .success(usage))
+                        let usage = try await job.client.fetchUsage()
+                        print("✅ \(job.name): \(usage.usagePercentage)%")
+                        return (job.index, job.name, .success(usage))
                     } catch {
-                        print("❌ \(serviceName) error: \(error)")
-                        return (index, serviceName, .failure(error))
+                        print("❌ \(job.name) error: \(error)")
+                        return (job.index, job.name, .failure(error))
                     }
                 }
             }
@@ -394,61 +413,65 @@ class AppState {
             return collected
         }
 
-        await MainActor.run {
-            var errors: [String] = []
-            for (index, serviceName, result) in results {
-                switch result {
-                case .success(let usage):
-                    services[index].usage = usage
-                    services[index].lastError = nil
-                    services[index].computeDelta()
-                    print("📊 Updated \(serviceName): \(usage.usagePercentage)%")
+        var errors: [String] = []
+        for (index, serviceName, result) in results {
+            switch result {
+            case .success(let usage):
+                services[index].usage = usage
+                services[index].lastError = nil
+                services[index].computeDelta()
+                print("📊 Updated \(serviceName): \(usage.usagePercentage)%")
 
-                    let historyEntry = UsageHistoryEntry(
-                        serviceType: services[index].config.serviceType,
-                        fiveHourUsage: usage.fiveHourUsage,
-                        sevenDayUsage: usage.sevenDayUsage
-                    )
-                    UsageHistoryStore.shared.saveEntry(historyEntry)
+                let historyEntry = UsageHistoryEntry(
+                    serviceType: services[index].config.serviceType,
+                    fiveHourUsage: usage.fiveHourUsage,
+                    sevenDayUsage: usage.sevenDayUsage
+                )
+                UsageHistoryStore.shared.saveEntry(historyEntry)
 
-                case .failure(let error):
-                    // Rate limit: keep previous data, don't show as error
-                    if let apiError = error as? APIError,
-                       case .rateLimitExceeded = apiError {
-                        print("⏳ \(serviceName): rate limited, keeping previous data")
-                        // First load still on placeholder ("Loading") — the 5-min
-                        // cycle would leave it stuck, so retry sooner once the limit
-                        // likely cleared, instead of waiting a full interval.
-                        if services[index].usage.tier == "Loading" {
-                            scheduleRateLimitRetry()
-                        }
-                    } else {
-                        services[index].lastError = error.localizedDescription
-                        errors.append("\(serviceName): \(error.localizedDescription)")
+            case .failure(let error):
+                // Rate limit: keep previous data, don't show as error
+                if let apiError = error as? APIError,
+                   case .rateLimitExceeded = apiError {
+                    print("⏳ \(serviceName): rate limited, keeping previous data")
+                    // First load still on placeholder ("Loading") — the 5-min
+                    // cycle would leave it stuck, so retry sooner once the limit
+                    // likely cleared, instead of waiting a full interval.
+                    if services[index].usage.tier == "Loading" {
+                        scheduleRateLimitRetry()
                     }
+                } else {
+                    services[index].lastError = error.localizedDescription
+                    errors.append("\(serviceName): \(error.localizedDescription)")
                 }
             }
-            lastRefreshDate = Date()
-            errorMessage = errors.isEmpty ? nil : errors.joined(separator: "; ")
-
-            // Parse token logs from Claude Code + Codex (background thread)
-            Task.detached(priority: .utility) { [weak self] in
-                let claude = ClaudeCodeTokenParser.shared.parse(days: 7)
-                // Start with Claude data, then merge Codex into it
-                var dailyBuckets = Dictionary(uniqueKeysWithValues: claude.daily.map { ($0.date, $0) })
-                var hourlyBuckets = Dictionary(uniqueKeysWithValues: claude.hourly.map { ($0.hourKey, $0) })
-                CodexTokenParser.shared.merge(into: &dailyBuckets, hourly: &hourlyBuckets, days: 7)
-
-                let summary = TokenUsageSummary(
-                    daily: dailyBuckets.values.sorted { $0.date < $1.date },
-                    hourly: hourlyBuckets.values.sorted { $0.hourKey < $1.hourKey },
-                    lastParsed: Date()
-                )
-                await MainActor.run { self?.tokenUsage = summary }
-            }
-
-            print("🏁 Refresh complete. Errors: \(errorMessage ?? "none")")
         }
+        lastRefreshDate = Date()
+        errorMessage = errors.isEmpty ? nil : errors.joined(separator: "; ")
+
+        // Parse token logs from Claude Code + Codex on a background priority so
+        // file I/O never blocks the main thread; the final assignment hops back
+        // to MainActor. `weak self` isn't needed inside a detached task with an
+        // explicit MainActor hop — but capturing self by value keeps the
+        // Sendable checker happy without racing.
+        Task.detached(priority: .utility) { [weak self] in
+            let claude = ClaudeCodeTokenParser.shared.parse(days: 7)
+            // Start with Claude data, then merge Codex into it
+            var dailyBuckets = Dictionary(uniqueKeysWithValues: claude.daily.map { ($0.date, $0) })
+            var hourlyBuckets = Dictionary(uniqueKeysWithValues: claude.hourly.map { ($0.hourKey, $0) })
+            CodexTokenParser.shared.merge(into: &dailyBuckets, hourly: &hourlyBuckets, days: 7)
+
+            let summary = TokenUsageSummary(
+                daily: dailyBuckets.values.sorted { $0.date < $1.date },
+                hourly: hourlyBuckets.values.sorted { $0.hourKey < $1.hourKey },
+                lastParsed: Date()
+            )
+            await MainActor.run { [weak self] in
+                self?.tokenUsage = summary
+            }
+        }
+
+        print("🏁 Refresh complete. Errors: \(errorMessage ?? "none")")
     }
 
     /// After a 429 on first load, retry well before the normal 5-min cycle so the
@@ -457,13 +480,17 @@ class AppState {
         guard !rateLimitRetryScheduled else { return }
         rateLimitRetryScheduled = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 75) { [weak self] in
-            guard let self else { return }
-            self.rateLimitRetryScheduled = false
-            Task { await self.refresh(interactive: false) }
+            Task { @MainActor in
+                guard let self else { return }
+                self.rateLimitRetryScheduled = false
+                await self.refresh(interactive: false)
+            }
         }
     }
 
-    private func createAPIClient(for config: ServiceConfig, interactive: Bool) -> AIServiceAPI {
+    /// nonisolated so the refresh TaskGroup can build clients up-front on the
+    /// main actor and hand them off; it doesn't touch AppState.
+    nonisolated static func createAPIClient(for config: ServiceConfig, interactive: Bool) -> AIServiceAPI {
         switch config.serviceType {
         case .claude:
             return AnthropicClient(config: config, allowKeychainInteraction: interactive)
@@ -475,6 +502,7 @@ class AppState {
     }
 }
 
+@MainActor
 @Observable
 class ServiceViewModel: Identifiable {
     let id: UUID

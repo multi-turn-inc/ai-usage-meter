@@ -1,14 +1,27 @@
 import Foundation
+import AIUsageMeterCore
 
+/// Detects when a user's Claude/Codex/Gemini CLI is actively hitting the AI
+/// backends by watching per-process network counters and TCP:443 endpoints.
+///
+/// Thread model
+/// ------------
+/// All mutable state (activeServices, resolvedIPs, counters, etc.) lives on
+/// the main actor. The heavy subprocess work — `nettop`, `lsof`, `ps`, and
+/// DNS resolution — runs in `Task.detached` so the main thread never blocks.
+/// Detached helpers return values; the main-actor code applies them.
+@MainActor
 final class ProcessMonitor {
     static let shared = ProcessMonitor()
 
     private(set) var activeServices: Set<ServiceType> = []
 
     private var timer: Timer?
+    private var pollTask: Task<Void, Never>?
     private let pollInterval: TimeInterval = 5
 
-    private let apiEndpoints: [(host: String, service: ServiceType)] = [
+    // nonisolated so pure helpers can reach these without needing the actor.
+    nonisolated static let apiEndpoints: [(host: String, service: ServiceType)] = [
         ("api.anthropic.com", .claude),
         ("api.openai.com", .codex),
         ("chatgpt.com", .codex),
@@ -20,29 +33,34 @@ final class ProcessMonitor {
     private var lastProcessCounters: [Int32: (inBytes: Int64, outBytes: Int64)] = [:]
     private var lastActiveAt: [ServiceType: Date] = [:]
 
-    private let minimumProcessDeltaBytes: Int64 = 4096
-    private let activityGraceInterval: TimeInterval = 4
+    private nonisolated static let minimumProcessDeltaBytes: Int64 = 4096
+    private nonisolated static let activityGraceInterval: TimeInterval = 4
 
     private init() {}
-
-    private let pollQueue = DispatchQueue(label: "com.aiusagemeter.processmonitor", qos: .utility)
 
     func start() {
         stop()
         lastProcessCounters.removeAll()
         lastActiveAt.removeAll()
-        pollQueue.async { [weak self] in
-            self?.resolveAllHosts()
+
+        Task { [weak self] in
+            let ips = await Self.resolveAllHosts()
+            self?.resolvedIPs = ips
         }
-        pollAsync()
+
+        schedulePoll()
         timer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
-            self?.pollAsync()
+            Task { @MainActor in
+                self?.schedulePoll()
+            }
         }
     }
 
     func stop() {
         timer?.invalidate()
         timer = nil
+        pollTask?.cancel()
+        pollTask = nil
         activeServices = []
         lastProcessCounters.removeAll()
         lastActiveAt.removeAll()
@@ -52,50 +70,77 @@ final class ProcessMonitor {
         activeServices.contains(serviceType)
     }
 
-    /// Runs the heavy subprocess work (nettop, lsof) off the main thread,
-    /// then hops back to update shared state.
-    private func pollAsync() {
-        pollQueue.async { [weak self] in
-            guard let self else { return }
-            // All subprocess + counter work stays on pollQueue (thread-safe)
-            let processDeltas = self.sampleProcessDeltas()
-            let detected = self.getActiveServicesFromConnections(processDeltas: processDeltas)
+    /// Kicks off one poll iteration: subprocesses run on a detached task,
+    /// results are applied back on the main actor. Coalesces overlapping runs
+    /// so a slow `nettop` can't stack up with the 5-s timer.
+    private func schedulePoll() {
+        if let existing = pollTask, !existing.isCancelled { return }
 
-            // Only the lightweight state update hops to main
-            DispatchQueue.main.async {
-                var newActive = detected
-                let now = Date()
-                for service in newActive {
-                    self.lastActiveAt[service] = now
-                }
-                for service in ServiceType.allCases where !newActive.contains(service) {
-                    if let lastSeen = self.lastActiveAt[service],
-                       now.timeIntervalSince(lastSeen) < self.activityGraceInterval {
-                        newActive.insert(service)
-                    }
-                }
-                if newActive != self.activeServices {
-                    self.activeServices = newActive
-                }
-                self.pollCount += 1
-                if self.pollCount % 60 == 0 {
-                    self.pollQueue.async { self.resolveAllHosts() }
-                }
+        // Snapshot the state the detached task needs. Value copies are safe to
+        // hand across actor boundaries.
+        let previousCounters = lastProcessCounters
+        let currentResolvedIPs = resolvedIPs
+
+        pollTask = Task.detached(priority: .utility) { [weak self] in
+            let (deltas, newCounters) = Self.sampleProcessDeltas(previous: previousCounters)
+            let detected = Self.getActiveServicesFromConnections(
+                processDeltas: deltas,
+                resolvedIPs: currentResolvedIPs
+            )
+
+            await MainActor.run { [weak self] in
+                self?.applyPollResults(detected: detected, newCounters: newCounters)
             }
         }
     }
 
-    private func resolveAllHosts() {
-        var newIPs: [String: ServiceType] = [:]
-        for (host, service) in apiEndpoints {
-            for ip in resolveHost(host) {
-                newIPs[ip] = service
+    /// Applies the results of one detached poll on the main actor.
+    private func applyPollResults(
+        detected: Set<ServiceType>,
+        newCounters: [Int32: (inBytes: Int64, outBytes: Int64)]
+    ) {
+        lastProcessCounters = newCounters
+
+        var newActive = detected
+        let now = Date()
+        for service in newActive {
+            lastActiveAt[service] = now
+        }
+        for service in ServiceType.allCases where !newActive.contains(service) {
+            if let lastSeen = lastActiveAt[service],
+               now.timeIntervalSince(lastSeen) < Self.activityGraceInterval {
+                newActive.insert(service)
             }
         }
-        self.resolvedIPs = newIPs
+        if newActive != activeServices {
+            activeServices = newActive
+        }
+
+        pollTask = nil
+        pollCount += 1
+        if pollCount % 60 == 0 {
+            Task { [weak self] in
+                let ips = await Self.resolveAllHosts()
+                self?.resolvedIPs = ips
+            }
+        }
     }
 
-    private func resolveHost(_ hostname: String) -> [String] {
+    // MARK: - Pure helpers (nonisolated so they can run off the main actor)
+
+    private nonisolated static func resolveAllHosts() async -> [String: ServiceType] {
+        await Task.detached(priority: .utility) {
+            var newIPs: [String: ServiceType] = [:]
+            for (host, service) in apiEndpoints {
+                for ip in resolveHost(host) {
+                    newIPs[ip] = service
+                }
+            }
+            return newIPs
+        }.value
+    }
+
+    private nonisolated static func resolveHost(_ hostname: String) -> [String] {
         var hints = addrinfo()
         hints.ai_family = AF_UNSPEC
         hints.ai_socktype = SOCK_STREAM
@@ -122,7 +167,7 @@ final class ProcessMonitor {
         return Array(ips)
     }
 
-    private func shouldCountConnection(command: String, pid: Int32, service: ServiceType) -> Bool {
+    private nonisolated static func shouldCountConnection(command: String, pid: Int32, service: ServiceType) -> Bool {
         switch service {
         case .claude:
             let c = command.lowercased()
@@ -159,7 +204,7 @@ final class ProcessMonitor {
         }
     }
 
-    private func hintedService(command: String, pid: Int32) -> ServiceType? {
+    private nonisolated static func hintedService(command: String, pid: Int32) -> ServiceType? {
         let c = command.lowercased()
 
         if c.contains("gemini") { return .gemini }
@@ -179,7 +224,7 @@ final class ProcessMonitor {
         return nil
     }
 
-    private func runWithTimeout(_ process: Process, pipe: Pipe, timeout: TimeInterval = 5) -> Data? {
+    private nonisolated static func runWithTimeout(_ process: Process, pipe: Pipe, timeout: TimeInterval = 5) -> Data? {
         do { try process.run() } catch { return nil }
         let deadline = DispatchTime.now() + timeout
         DispatchQueue.global().asyncAfter(deadline: deadline) {
@@ -190,7 +235,7 @@ final class ProcessMonitor {
         return data
     }
 
-    private func commandLine(for pid: Int32) -> String? {
+    private nonisolated static func commandLine(for pid: Int32) -> String? {
         let pipe = Pipe()
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/ps")
@@ -206,7 +251,10 @@ final class ProcessMonitor {
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    private func sampleProcessDeltas() -> [Int32: Int64] {
+    /// Returns (deltas, newCounters). Pure: no shared state read/written.
+    private nonisolated static func sampleProcessDeltas(
+        previous: [Int32: (inBytes: Int64, outBytes: Int64)]
+    ) -> (deltas: [Int32: Int64], current: [Int32: (inBytes: Int64, outBytes: Int64)]) {
         let pipe = Pipe()
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/nettop")
@@ -215,9 +263,9 @@ final class ProcessMonitor {
         process.standardError = FileHandle.nullDevice
         process.qualityOfService = .utility
 
-        guard let data = runWithTimeout(process, pipe: pipe, timeout: 5) else { return [:] }
+        guard let data = runWithTimeout(process, pipe: pipe, timeout: 5) else { return ([:], previous) }
 
-        guard let output = String(data: data, encoding: .utf8) else { return [:] }
+        guard let output = String(data: data, encoding: .utf8) else { return ([:], previous) }
 
         var current: [Int32: (inBytes: Int64, outBytes: Int64)] = [:]
         var deltas: [Int32: Int64] = [:]
@@ -234,9 +282,9 @@ final class ProcessMonitor {
             guard let inBytes = Int64(parts[1]), let outBytes = Int64(parts[2]) else { continue }
             current[pid] = (inBytes, outBytes)
 
-            if let previous = lastProcessCounters[pid] {
-                let deltaIn = max(0, inBytes - previous.inBytes)
-                let deltaOut = max(0, outBytes - previous.outBytes)
+            if let previousCounters = previous[pid] {
+                let deltaIn = max(0, inBytes - previousCounters.inBytes)
+                let deltaOut = max(0, outBytes - previousCounters.outBytes)
                 let delta = deltaIn + deltaOut
                 if delta > 0 {
                     deltas[pid] = delta
@@ -244,11 +292,13 @@ final class ProcessMonitor {
             }
         }
 
-        lastProcessCounters = current
-        return deltas
+        return (deltas, current)
     }
 
-    private func getActiveServicesFromConnections(processDeltas: [Int32: Int64]) -> Set<ServiceType> {
+    private nonisolated static func getActiveServicesFromConnections(
+        processDeltas: [Int32: Int64],
+        resolvedIPs: [String: ServiceType]
+    ) -> Set<ServiceType> {
         let pipe = Pipe()
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")

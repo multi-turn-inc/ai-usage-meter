@@ -220,9 +220,15 @@ final class MenuBarPanelController: NSObject, NSWindowDelegate {
             context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
             window.animator().alphaValue = 0
         } completionHandler: { [weak self] in
-            self?.window.orderOut(nil)
-            self?.window.alphaValue = 1
-            self?.statusItem.button?.highlight(false)
+            // AppKit runs animation completion handlers on the main queue, but
+            // Swift's concurrency checker sees a nonisolated Sendable closure
+            // here — hop back onto the main actor explicitly so we can touch
+            // MainActor-isolated properties without warnings.
+            Task { @MainActor in
+                self?.window.orderOut(nil)
+                self?.window.alphaValue = 1
+                self?.statusItem.button?.highlight(false)
+            }
         }
     }
 
@@ -329,6 +335,7 @@ private struct IconSnapshot: Equatable {
     let services: [Service]
     let anyConsuming: Bool
 
+    @MainActor
     init(appState: AppState) {
         self.services = appState.services.map {
             Service(

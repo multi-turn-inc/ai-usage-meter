@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import AIUsageMeterCore
 
 @MainActor
 enum MenuBarIconRenderer {
@@ -48,8 +49,10 @@ enum MenuBarIconRenderer {
         let loadSnapshot: (cpu: Double, gpu: Double, ram: Double)? = showLoad ? (load.cpu, load.gpu, load.ram) : nil
 
         let image = NSImage(size: NSSize(width: totalWidth, height: height), flipped: false) { _ in
+            // `NSAppearance.current` is deprecated (macOS 12+); use the
+            // drawing appearance active for this image draw pass instead.
             let dark: Bool = {
-                switch NSAppearance.current.bestMatch(from: [.darkAqua, .aqua]) {
+                switch NSAppearance.currentDrawing().bestMatch(from: [.darkAqua, .aqua]) {
                 case .darkAqua: return true
                 default: return false
                 }
