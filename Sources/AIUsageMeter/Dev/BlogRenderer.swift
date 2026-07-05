@@ -2,10 +2,21 @@ import AppKit
 import SwiftUI
 
 /// Renders SwiftUI views to PNG files for blog posts.
+///
+/// The output directory is chosen by (in order):
+///   1. `AIM_BLOG_RENDER_OUTPUT_DIR` if set (expands `~`)
+///   2. `<tmp>/token-burn-blog-renders` — never embeds a personal path in the binary
 @MainActor
 enum BlogRenderer {
-    private static let outputDir = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("_PARA/2_Areas/🏢_멀티턴_운영/ZUZU/docs/multi-turn-homepage/public/blog/figures/token-burn")
+    private static var outputDir: URL {
+        if let raw = ProcessInfo.processInfo.environment["AIM_BLOG_RENDER_OUTPUT_DIR"],
+           !raw.isEmpty {
+            let expanded = (raw as NSString).expandingTildeInPath
+            return URL(fileURLWithPath: expanded, isDirectory: true)
+        }
+        return FileManager.default.temporaryDirectory
+            .appendingPathComponent("token-burn-blog-renders", isDirectory: true)
+    }
 
     static func renderAll(appState: AppState) {
         let dir = outputDir

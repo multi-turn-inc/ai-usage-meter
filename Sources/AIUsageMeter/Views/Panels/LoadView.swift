@@ -1,0 +1,142 @@
+import SwiftUI
+
+/// The "Load" tab detail: simple CPU / GPU / RAM bars, the top-CPU process list,
+/// and an optional on-demand AI diagnosis. The glanceable gauge lives in the menu
+/// bar; this is the "open for detail" view.
+struct LoadView: View {
+    private var load = SystemLoadMonitor.shared
+    private var advisor = ThermalAdvisor.shared
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                loadGauge
+                processList
+                Divider().opacity(0.2)
+                aiSection
+            }
+            .padding(12)
+        }
+        .frame(maxHeight: 560)
+        .premiumCard()
+        .task {
+            // Refresh while the tab is open; auto-cancels when it closes. The menu
+            // bar already samples load continuously; here we also refresh the
+            // process list (which shells out to `ps`) every ~2s.
+            load.sample()
+            await advisor.sampleNow()
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                load.sample()
+                await advisor.sampleNow()
+            }
+        }
+    }
+
+    // MARK: CPU / GPU / RAM bars
+
+    private var loadGauge: some View {
+        VStack(spacing: 8) {
+            loadBar(label: "CPU", value: load.cpu, color: .blue)
+            loadBar(label: "GPU", value: load.gpu, color: .purple)
+            loadBar(label: L.ram, value: load.ram, color: SystemLoadMonitor.ramColor(load.ram))
+        }
+    }
+
+    private func loadBar(label: String, value: Double, color: Color) -> some View {
+        HStack(spacing: 8) {
+            Text(label)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 34, alignment: .leading)
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color(nsColor: .separatorColor).opacity(0.18))
+                    Capsule().fill(color.gradient)
+                        .frame(width: max(4, geo.size.width * CGFloat(min(max(value, 0), 100) / 100)))
+                        .animation(.easeOut(duration: 0.6), value: value)
+                }
+            }
+            .frame(height: 8)
+            Text("\(Int(value.rounded()))%")
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(.primary)
+                .frame(width: 38, alignment: .trailing)
+                .contentTransition(.numericText())
+        }
+    }
+
+    // MARK: process list
+
+    @ViewBuilder
+    private var processList: some View {
+        if !advisor.topProcesses.isEmpty {
+            VStack(spacing: 3) {
+                Text(L.topCPU)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                ForEach(advisor.topProcesses) { p in
+                    HStack {
+                        Text(p.name)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        Spacer()
+                        Text("\(Int(p.cpu.rounded()))%")
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(p.cpu >= 50 ? Color.orange : Color.secondary)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: AI diagnosis
+
+    @ViewBuilder
+    private var aiSection: some View {
+        if advisor.hasAPIKey {
+            Button {
+                advisor.diagnoseNow()
+            } label: {
+                HStack(spacing: 6) {
+                    if advisor.isDiagnosing {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: "sparkles").font(.system(size: 11))
+                    }
+                    Text(advisor.isDiagnosing ? L.updating : L.aiDiagnose)
+                        .font(.system(size: 11, weight: .medium))
+                }
+            }
+            .buttonStyle(.glass)
+            .buttonBorderShape(.capsule)
+            .disabled(advisor.isDiagnosing)
+
+            if let diagnosis = advisor.diagnosis {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.orange)
+                    Text(diagnosis)
+                        .font(.system(size: 11))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(8)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.orange.opacity(0.08))
+                )
+            }
+            if let err = advisor.lastError {
+                Text(err).font(.system(size: 10)).foregroundStyle(.red)
+            }
+        } else {
+            Text(L.thermalAdvisorNeedsKey)
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+        }
+    }
+}

@@ -1,0 +1,100 @@
+import AppKit
+import SwiftUI
+
+struct AuthErrorView: View {
+    let service: ServiceViewModel
+    var onRefresh: (() -> Void)?
+
+    var body: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.yellow)
+                    .font(.system(size: 14))
+                    .modifier(PulseEffect())
+
+                Text(errorMessage)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            HStack(spacing: 8) {
+                Button(action: openTerminalWithCommand) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "terminal.fill")
+                            .font(.system(size: 11))
+                        Text(buttonLabel)
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                }
+                .buttonStyle(.glass)
+
+                if let onRefresh {
+                    Button(action: onRefresh) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 12, weight: .semibold))
+                            .padding(.vertical, 8)
+                            .padding(.horizontal, 12)
+                    }
+                    .buttonStyle(.glass)
+                }
+            }
+        }
+    }
+
+    private var needsLogout: Bool {
+        guard let error = service.lastError?.lowercased() else { return false }
+        return error.contains("scope") || error.contains("permission") || error.contains("403")
+            || error.contains("/logout")
+    }
+
+    private var errorMessage: String {
+        if let error = service.lastError {
+            let lower = error.lowercased()
+            if lower.contains("scope") || lower.contains("permission") {
+                return "토큰 권한이 부족합니다. 로그아웃 후 재로그인해주세요."
+            }
+            if lower.contains("만료") || lower.contains("expired") || lower.contains("revoke") {
+                return "토큰이 만료되었습니다. 재로그인해주세요."
+            }
+        }
+        switch service.config.serviceType {
+        case .claude: return "Claude 인증이 필요합니다."
+        case .gemini: return "Gemini 인증이 필요합니다."
+        case .codex: return "Codex 인증이 필요합니다."
+        }
+    }
+
+    private var buttonLabel: String {
+        switch service.config.serviceType {
+        case .claude: return needsLogout ? "로그아웃 후 재로그인" : "claude 실행하기"
+        case .gemini: return "gemini auth 실행하기"
+        case .codex: return "codex 실행하기"
+        }
+    }
+
+    private func openTerminalWithCommand() {
+        let command: String
+        switch service.config.serviceType {
+        case .claude:
+            command = needsLogout ? "claude /logout && claude" : "claude"
+        case .gemini:
+            command = "gemini"
+        case .codex:
+            command = "codex"
+        }
+
+        // Randomized filename prevents symlink pre-placement attacks in the shared
+        // temporary directory.
+        let scriptName = "aimonitor-reauth-\(UUID().uuidString).command"
+        let scriptPath = NSTemporaryDirectory() + scriptName
+        let scriptContent = "#!/bin/bash\necho '🔄 재인증 중...'\n\(command)\necho ''\necho '✅ 완료! 이 창을 닫아도 됩니다.'\nread -p ''\n"
+        try? scriptContent.write(toFile: scriptPath, atomically: true, encoding: .utf8)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptPath)
+        NSWorkspace.shared.open(URL(fileURLWithPath: scriptPath))
+    }
+}

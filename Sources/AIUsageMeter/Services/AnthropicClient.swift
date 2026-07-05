@@ -286,28 +286,6 @@ class AnthropicClient: BaseAPIClient, AIServiceAPI {
         return (input, output, limit)
     }
 
-    func trackUsage(inputTokens: Int, outputTokens: Int, tokensLimit: Int? = nil) {
-        let key = "anthropic_usage_\(config.id)"
-        var usage = AppDefaults.userDefaults.dictionary(forKey: key) ?? [:]
-
-        let totalInput = (usage["inputTokens"] as? Int ?? 0) + inputTokens
-        let totalOutput = (usage["outputTokens"] as? Int ?? 0) + outputTokens
-
-        usage["inputTokens"] = totalInput
-        usage["outputTokens"] = totalOutput
-        if let limit = tokensLimit {
-            usage["tokensLimit"] = limit
-        }
-        usage["lastUpdated"] = Date().timeIntervalSince1970
-
-        AppDefaults.userDefaults.set(usage, forKey: key)
-    }
-
-    func resetUsage() {
-        let key = "anthropic_usage_\(config.id)"
-        AppDefaults.userDefaults.removeObject(forKey: key)
-    }
-
     private func convertToUsageData(localUsage: (input: Int, output: Int, limit: Int), tier: String) -> UsageData {
         let now = Date()
         let calendar = Calendar.current
