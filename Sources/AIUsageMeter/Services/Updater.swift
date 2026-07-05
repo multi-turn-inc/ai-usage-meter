@@ -60,7 +60,7 @@ class Updater {
     // keep in sync with the released version or settings shows a phantom update.
     static let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
         ?? (Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String)
-        ?? "4.3.9"
+        ?? "4.4.0"
 
     private var currentVersion: String { Self.appVersion }
 
