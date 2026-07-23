@@ -40,6 +40,11 @@ public struct TokenUsageSummary {
         return daily.first { $0.date == todayKey }?.messageCount ?? 0
     }
 
+    public var todayCachedTokens: Int64 {
+        let todayKey = Self.dayKey(for: Date())
+        return daily.first { $0.date == todayKey }?.cachedInputTokens ?? 0
+    }
+
     public var todayCost: Double {
         let todayKey = Self.dayKey(for: Date())
         return daily.first { $0.date == todayKey }?.costUSD ?? 0
@@ -47,6 +52,10 @@ public struct TokenUsageSummary {
 
     public var weekTokens: Int64 {
         daily.reduce(0) { $0 + $1.totalTokens }
+    }
+
+    public var weekCachedTokens: Int64 {
+        daily.reduce(0) { $0 + $1.cachedInputTokens }
     }
 
     public var weekCost: Double {
@@ -66,6 +75,13 @@ public struct TokenUsageSummary {
     public func tokens(inLastHours hours: Int) -> Int64 {
         let cutoff = Calendar.current.date(byAdding: .hour, value: -hours, to: Date()) ?? Date()
         return hourly.filter { $0.timestamp >= cutoff }.reduce(0) { $0 + $1.totalTokens }
+    }
+
+    public func cachedTokens(inLastHours hours: Int) -> Int64 {
+        let cutoff = Calendar.current.date(byAdding: .hour, value: -hours, to: Date()) ?? Date()
+        return hourly
+            .filter { $0.timestamp >= cutoff }
+            .reduce(0) { $0 + $1.cachedInputTokens }
     }
 
     public func messages(inLastHours hours: Int) -> Int {
@@ -89,6 +105,7 @@ public struct DailyTokenUsage: Identifiable {
     public var id: String { date }
     public let date: String // yyyy-MM-dd
     public var inputTokens: Int64 = 0
+    public var cachedInputTokens: Int64 = 0
     public var outputTokens: Int64 = 0
     public var messageCount: Int = 0
     public var costUSD: Double = 0
@@ -110,6 +127,7 @@ public struct HourlyTokenUsage: Identifiable {
     public let hourKey: String // yyyy-MM-dd HH
     public let timestamp: Date
     public var totalTokens: Int64 = 0
+    public var cachedInputTokens: Int64 = 0
     public var messageCount: Int = 0
     public var costUSD: Double = 0
     public var byService: [ServiceType: Int64] = [:]

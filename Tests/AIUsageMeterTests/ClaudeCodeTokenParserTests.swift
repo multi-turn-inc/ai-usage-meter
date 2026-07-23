@@ -13,6 +13,10 @@ func makeClaudeProjectsDir(files: [String: String]) -> URL {
                                               withIntermediateDirectories: true)
     for (name, content) in files {
         let dest = projectDir.appendingPathComponent(name)
+        try! FileManager.default.createDirectory(
+            at: dest.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
         try! content.write(to: dest, atomically: true, encoding: .utf8)
     }
     return root
@@ -21,6 +25,59 @@ func makeClaudeProjectsDir(files: [String: String]) -> URL {
 // MARK: - ClaudeCodeTokenParserTests
 
 final class ClaudeCodeTokenParserTests: XCTestCase {
+
+    func test_nestedSubagentAndWorkflowLogsAreIncluded() {
+        let root = makeClaudeProjectsDir(files: [
+            "session-root.jsonl": """
+            {"type":"assistant","message":{"id":"msg_root","model":"claude-sonnet-4-6","usage":{"input_tokens":100,"output_tokens":40}},"requestId":"req_root","timestamp":"2026-07-01T09:00:00.000Z"}
+            """,
+            "session-1/subagents/agent-a.jsonl": """
+            {"type":"assistant","message":{"id":"msg_agent","model":"claude-sonnet-4-6","usage":{"input_tokens":200,"output_tokens":80}},"requestId":"req_agent","timestamp":"2026-07-01T10:00:00.000Z"}
+            """,
+            "session-1/subagents/workflows/wf_1/agent-b.jsonl": """
+            {"type":"assistant","message":{"id":"msg_workflow","model":"claude-sonnet-4-6","usage":{"input_tokens":300,"output_tokens":120}},"requestId":"req_workflow","timestamp":"2026-07-01T11:00:00.000Z"}
+            """,
+        ])
+
+        let summary = ClaudeCodeTokenParser(baseDirForTesting: root).parse(days: 1000)
+
+        XCTAssertEqual(summary.daily.reduce(0) { $0 + $1.inputTokens }, 600)
+        XCTAssertEqual(summary.daily.reduce(0) { $0 + $1.outputTokens }, 240)
+        XCTAssertEqual(summary.daily.reduce(0) { $0 + $1.messageCount }, 3)
+    }
+
+    func test_duplicateMessageAcrossRootAndNestedLogsIsCountedOnce() {
+        let duplicate = """
+        {"type":"assistant","message":{"id":"msg_shared","model":"claude-sonnet-4-6","usage":{"input_tokens":100,"output_tokens":40}},"requestId":"req_shared","timestamp":"2026-07-01T09:00:00.000Z"}
+        """
+        let root = makeClaudeProjectsDir(files: [
+            "session-root.jsonl": duplicate,
+            "session-1/subagents/agent-a.jsonl": duplicate,
+        ])
+
+        let summary = ClaudeCodeTokenParser(baseDirForTesting: root).parse(days: 1000)
+
+        XCTAssertEqual(summary.daily.reduce(0) { $0 + $1.totalTokens }, 140)
+        XCTAssertEqual(summary.daily.reduce(0) { $0 + $1.messageCount }, 1)
+    }
+
+    func test_nestedLogOlderThanModificationCutoffIsSkipped() {
+        let root = makeClaudeProjectsDir(files: [
+            "session-1/subagents/agent-old.jsonl": """
+            {"type":"assistant","message":{"id":"msg_old","model":"claude-sonnet-4-6","usage":{"input_tokens":100,"output_tokens":40}},"requestId":"req_old","timestamp":"2026-07-01T09:00:00.000Z"}
+            """,
+        ])
+        let file = root
+            .appendingPathComponent("test-project/session-1/subagents/agent-old.jsonl")
+        try! FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSince1970: 0)],
+            ofItemAtPath: file.path
+        )
+
+        let summary = ClaudeCodeTokenParser(baseDirForTesting: root).parse(days: 1000)
+
+        XCTAssertEqual(summary.weekTokens, 0)
+    }
 
     // MARK: Fixture (f): duplicate message (same messageId + requestId)
     //
@@ -106,11 +163,13 @@ final class ClaudeCodeTokenParserTests: XCTestCase {
 
         let totalInput  = summary.daily.reduce(0) { $0 + $1.inputTokens }
         let totalOutput = summary.daily.reduce(0) { $0 + $1.outputTokens }
+        let totalCached = summary.daily.reduce(0) { $0 + $1.cachedInputTokens }
         let totalCost   = summary.daily.reduce(0.0) { $0 + $1.costUSD }
 
         // Token counts: input+output only (cache tokens excluded from count)
         XCTAssertEqual(totalInput,  1000 + 800 + 300)  // = 2100
         XCTAssertEqual(totalOutput, 200 + 150 + 100)   // = 450
+        XCTAssertEqual(totalCached, 500 + 600)          // = 1100, shown separately
 
         // Cost must be > zero and close to the hand-computed 0.025175
         XCTAssertGreaterThan(totalCost, 0.0)

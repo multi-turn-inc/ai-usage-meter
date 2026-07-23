@@ -67,24 +67,38 @@ public final class ClaudeCodeTokenParser {
         guard fileManager.fileExists(atPath: baseDir.path) else { return [] }
 
         var results: [URL] = []
-        guard let projectDirs = try? fileManager.contentsOfDirectory(
-            at: baseDir, includingPropertiesForKeys: [.contentModificationDateKey], options: .skipsHiddenFiles
-        ) else { return [] }
+        let resourceKeys: Set<URLResourceKey> = [
+            .isDirectoryKey,
+            .isRegularFileKey,
+            .isSymbolicLinkKey,
+            .contentModificationDateKey,
+        ]
+        guard let enumerator = fileManager.enumerator(
+            at: baseDir,
+            includingPropertiesForKeys: Array(resourceKeys),
+            options: [.skipsHiddenFiles, .skipsPackageDescendants],
+            errorHandler: { _, _ in true }
+        ) else {
+            return []
+        }
 
-        for projectDir in projectDirs {
-            var isDir: ObjCBool = false
-            guard fileManager.fileExists(atPath: projectDir.path, isDirectory: &isDir), isDir.boolValue else { continue }
+        for case let file as URL in enumerator {
+            guard let values = try? file.resourceValues(forKeys: resourceKeys) else { continue }
 
-            guard let files = try? fileManager.contentsOfDirectory(
-                at: projectDir, includingPropertiesForKeys: [.contentModificationDateKey], options: .skipsHiddenFiles
-            ) else { continue }
-
-            for file in files where file.pathExtension == "jsonl" {
-                if let modDate = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
-                   modDate >= cutoff {
-                    results.append(file)
+            // Do not follow links out of ~/.claude/projects or descend into linked trees.
+            if values.isSymbolicLink == true {
+                if values.isDirectory == true {
+                    enumerator.skipDescendants()
                 }
+                continue
             }
+            guard values.isRegularFile == true,
+                  file.pathExtension == "jsonl",
+                  let modDate = values.contentModificationDate,
+                  modDate >= cutoff else {
+                continue
+            }
+            results.append(file)
         }
 
         return results
@@ -135,6 +149,7 @@ public final class ClaudeCodeTokenParser {
                     cacheWrite1h = ephemeral1h
                 }
             }
+            let cachedInput = cacheRead + cacheWrite5m + cacheWrite1h
             let cost = ModelPricing.shared.claudeCost(
                 model: message["model"] as? String,
                 input: input, output: output,
@@ -147,6 +162,7 @@ public final class ClaudeCodeTokenParser {
             let dayKey = dayFormatter.string(from: ts)
             var daily = dailyBuckets[dayKey] ?? DailyTokenUsage(date: dayKey)
             daily.inputTokens += input
+            daily.cachedInputTokens += cachedInput
             daily.outputTokens += output
             daily.messageCount += 1
             daily.costUSD += cost
@@ -158,6 +174,7 @@ public final class ClaudeCodeTokenParser {
             let hourStart = Calendar.current.dateInterval(of: .hour, for: ts)?.start ?? ts
             var hourly = hourlyBuckets[hKey] ?? HourlyTokenUsage(hourKey: hKey, timestamp: hourStart)
             hourly.totalTokens += total
+            hourly.cachedInputTokens += cachedInput
             hourly.messageCount += 1
             hourly.costUSD += cost
             hourly.byService[.claude, default: 0] += total

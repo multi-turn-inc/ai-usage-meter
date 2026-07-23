@@ -31,7 +31,7 @@ final class CodexTokenParser {
         let result = CodexSessionParser.shared.parse(since: cutoff)
 
         for event in result.events {
-            let total = event.totalTokens > 0 ? event.totalTokens : event.inputTokens + event.outputTokens
+            let total = event.displayTotalTokens
             let cost = ModelPricing.shared.codexCost(
                 model: event.model,
                 input: event.inputTokens,
@@ -43,7 +43,8 @@ final class CodexTokenParser {
             // Daily
             let dayKey = dayFormatter.string(from: event.timestamp)
             var d = daily[dayKey] ?? DailyTokenUsage(date: dayKey)
-            d.inputTokens += event.inputTokens
+            d.inputTokens += event.nonCachedInputTokens
+            d.cachedInputTokens += event.cachedInputTokens
             d.outputTokens += event.outputTokens
             d.messageCount += 1
             d.costUSD += cost
@@ -55,6 +56,7 @@ final class CodexTokenParser {
             let hourStart = Calendar.current.dateInterval(of: .hour, for: event.timestamp)?.start ?? event.timestamp
             var h = hourly[hKey] ?? HourlyTokenUsage(hourKey: hKey, timestamp: hourStart)
             h.totalTokens += total
+            h.cachedInputTokens += event.cachedInputTokens
             h.messageCount += 1
             h.costUSD += cost
             h.byService[.codex, default: 0] += total

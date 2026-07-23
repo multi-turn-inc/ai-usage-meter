@@ -168,8 +168,8 @@ class CodexClient: BaseAPIClient, AIServiceAPI {
 
         var costUSD: Double = 0
         for event in parsed.events {
-            stats.totalTokens += event.totalTokens
-            stats.inputTokens += event.inputTokens
+            stats.totalTokens += event.displayTotalTokens
+            stats.inputTokens += event.nonCachedInputTokens
             stats.outputTokens += event.outputTokens
             costUSD += ModelPricing.shared.codexCost(
                 model: event.model,

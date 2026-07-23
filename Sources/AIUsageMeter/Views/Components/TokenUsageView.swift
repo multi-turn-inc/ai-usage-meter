@@ -33,6 +33,14 @@ struct TokenUsageView: View {
                             .contentTransition(.numericText())
                             .help("Estimated cost at pay-per-use API prices")
                     }
+
+                    if cachedTokensForScope > 0 {
+                        Text("+ \(formatTokens(cachedTokensForScope)) cached")
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundStyle(.tertiary)
+                            .contentTransition(.numericText())
+                            .help("Cached input is shown separately and excluded from the main token total")
+                    }
                 }
                 .animation(.spring(response: 0.35, dampingFraction: 0.85), value: scopeIndex)
 
@@ -234,6 +242,14 @@ struct TokenUsageView: View {
         case .hour1: return summary.cost(inLastHours: 1)
         case .hours24: return summary.todayCost
         case .days7: return summary.weekCost
+        }
+    }
+
+    private var cachedTokensForScope: Int64 {
+        switch scope {
+        case .hour1: return summary.cachedTokens(inLastHours: 1)
+        case .hours24: return summary.todayCachedTokens
+        case .days7: return summary.weekCachedTokens
         }
     }
 

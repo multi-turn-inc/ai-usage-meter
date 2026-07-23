@@ -9,6 +9,36 @@ public struct CodexUsageEvent {
     public let outputTokens: Int64      // includes reasoning tokens
     public let reasoningOutputTokens: Int64
     public let totalTokens: Int64
+
+    public init(
+        timestamp: Date,
+        model: String?,
+        inputTokens: Int64,
+        cachedInputTokens: Int64,
+        outputTokens: Int64,
+        reasoningOutputTokens: Int64,
+        totalTokens: Int64
+    ) {
+        self.timestamp = timestamp
+        self.model = model
+        self.inputTokens = inputTokens
+        self.cachedInputTokens = min(max(0, cachedInputTokens), max(0, inputTokens))
+        self.outputTokens = outputTokens
+        self.reasoningOutputTokens = reasoningOutputTokens
+        self.totalTokens = totalTokens
+    }
+
+    /// Input tokens that were not served from the prompt cache. OpenAI reports
+    /// cached input as a subset of input, unlike Anthropic's separate fields.
+    public var nonCachedInputTokens: Int64 {
+        max(0, inputTokens - cachedInputTokens)
+    }
+
+    /// Cross-service display total. Cache traffic is tracked separately so the
+    /// Claude and Codex numbers shown side-by-side use the same accounting basis.
+    public var displayTotalTokens: Int64 {
+        nonCachedInputTokens + outputTokens
+    }
 }
 
 public struct CodexRateLimitInfo {
@@ -56,6 +86,7 @@ public final class CodexSessionParser: @unchecked Sendable {
     }
 
     private let codexHome: String
+    private let canonicalWindowStartOverride: Date?
     private let lock = NSLock()
     private var cache: (result: Result, at: Date)?
     private var parsing = false
@@ -90,12 +121,16 @@ public final class CodexSessionParser: @unchecked Sendable {
     private init() {
         codexHome = ProcessInfo.processInfo.environment["CODEX_HOME"]
             ?? NSHomeDirectory() + "/.codex"
+        canonicalWindowStartOverride = nil
     }
 
     /// Testing initializer — injects a custom codexHome path instead of ~/.codex.
     /// Not intended for production use.
     init(codexHomeForTesting: String) {
         codexHome = codexHomeForTesting
+        // Test fixtures use stable historical dates. Keep the production eight-day
+        // scan window while making those fixtures independent of the wall clock.
+        canonicalWindowStartOverride = Date(timeIntervalSince1970: 0)
     }
 
     // MARK: - Public
@@ -124,7 +159,8 @@ public final class CodexSessionParser: @unchecked Sendable {
         parsing = true
         lock.unlock()
 
-        let windowStart = Date().addingTimeInterval(-Double(windowDays) * 86400)
+        let windowStart = canonicalWindowStartOverride
+            ?? Date().addingTimeInterval(-Double(windowDays) * 86400)
         let result = doParse(since: windowStart)
 
         lock.lock()

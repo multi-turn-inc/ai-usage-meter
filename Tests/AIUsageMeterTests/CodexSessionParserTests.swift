@@ -66,6 +66,8 @@ final class CodexSessionParserTests: XCTestCase {
         XCTAssertEqual(e2.outputTokens, 80)
         XCTAssertEqual(e2.reasoningOutputTokens, 10)
         XCTAssertEqual(e2.totalTokens, 280)
+        XCTAssertEqual(e2.nonCachedInputTokens, 180)
+        XCTAssertEqual(e2.displayTotalTokens, 260)
         XCTAssertEqual(e2.model, "gpt-5.3-codex")
     }
 
