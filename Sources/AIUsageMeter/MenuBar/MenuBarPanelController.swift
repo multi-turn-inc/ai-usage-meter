@@ -108,6 +108,7 @@ final class MenuBarPanelController: NSObject, NSWindowDelegate {
             // what to watch. The actual diff is done via IconSnapshot below.
             _ = appState.isRefreshing
             _ = appState.lastRefreshDate
+            _ = appState.menuBarNeedsRedraw
             _ = themeManager.current.menuBar
             for service in appState.services {
                 _ = service.config.isEnabled
@@ -334,9 +335,13 @@ private struct IconSnapshot: Equatable {
 
     let services: [Service]
     let anyConsuming: Bool
+    /// Included so a change that doesn't move any number — picking a different
+    /// representative account — still counts as a change worth redrawing.
+    let redrawToken: Int
 
     @MainActor
     init(appState: AppState) {
+        self.redrawToken = appState.menuBarNeedsRedraw
         self.services = appState.services.map {
             Service(
                 isEnabled: $0.config.isEnabled,

@@ -6,6 +6,8 @@ struct CircularGaugeView: View {
     /// Extra-small variant used once several accounts share the row — five
     /// compact gauges are far wider than the 300pt panel and would be clipped.
     var mini: Bool = false
+    /// Called after pinning changes so the menu-bar icon can redraw.
+    var onPinChanged: (() -> Void)?
 
     @State private var animatedFiveHour: Double = 0
     @State private var animatedSevenDay: Double = 0
@@ -20,6 +22,13 @@ struct CircularGaugeView: View {
     private var gaugeLabel: String {
         guard let account = service.account else { return service.name }
         return AccountRegistry.shared.shortDisplayName(for: account)
+    }
+
+    private var pinHelp: String {
+        guard let account = service.account else { return "" }
+        return AccountRegistry.shared.isPinned(account)
+            ? "메뉴바 대표 해제 (자동 선택으로 되돌림)"
+            : "메뉴바에 이 계정 표시"
     }
 
     var body: some View {
@@ -97,8 +106,27 @@ struct CircularGaugeView: View {
                     }
                 }
             }
+            .overlay(alignment: .topTrailing) {
+                if let account = service.account, AccountRegistry.shared.isPinned(account) {
+                    Circle()
+                        .fill(Color.red)
+                        .frame(width: mini ? 8 : 10, height: mini ? 8 : 10)
+                        .overlay(Circle().stroke(.white.opacity(0.9), lineWidth: 1.5))
+                        .offset(x: 2, y: -2)
+                        .transition(.scale.combined(with: .opacity))
+                }
+            }
             .scaleEffect(appeared ? 1.0 : 0.6)
             .opacity(appeared ? 1 : 0)
+            .contentShape(Circle())
+            .onTapGesture {
+                guard let account = service.account else { return }
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                    AccountRegistry.shared.togglePinned(account)
+                }
+                onPinChanged?()
+            }
+            .help(pinHelp)
 
             Text(gaugeLabel)
                 .font(.system(size: mini ? 9 : (compact ? 12 : 13), weight: .semibold))

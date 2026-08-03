@@ -18,6 +18,9 @@ class AppState {
     var tokenUsage: TokenUsageSummary = .empty
     /// Which panel view to show, set by which menu-bar cell the user clicked.
     var panelTab: PanelTab = .usage
+    /// Bumped when something the icon depends on changes but the usage numbers
+    /// don't — pinning a different representative account, for instance.
+    var menuBarNeedsRedraw: Int = 0
 
     private var refreshTimer: Timer?
     private var refreshInterval: TimeInterval = 300

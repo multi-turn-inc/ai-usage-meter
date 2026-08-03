@@ -16,6 +16,7 @@ final class AccountRegistry {
     /// Outcome of the most recent "add account", shown in Settings.
     var addStatus: String?
 
+    private let pinnedKey = "pinnedAccountIDs"
     private let hiddenKey = "hiddenAccountIDs"
     private let dismissedKey = "dismissedAccountIDs"
     private let aliasKey = "accountAliases"
@@ -38,7 +39,15 @@ final class AccountRegistry {
         didSet { AppDefaults.userDefaults.set(aliases, forKey: aliasKey) }
     }
 
+    /// The account each provider shows in the menu bar, keyed by service.
+    /// Without a choice the busiest account is used, which is a sensible default
+    /// but jumps around as usage shifts; pinning makes it stay put.
+    private(set) var pinned: [String: String] {
+        didSet { AppDefaults.userDefaults.set(pinned, forKey: pinnedKey) }
+    }
+
     private init() {
+        pinned = AppDefaults.userDefaults.dictionary(forKey: pinnedKey) as? [String: String] ?? [:]
         hidden = Set(AppDefaults.userDefaults.stringArray(forKey: hiddenKey) ?? [])
         dismissed = Set(AppDefaults.userDefaults.stringArray(forKey: dismissedKey) ?? [])
         aliases = AppDefaults.userDefaults.dictionary(forKey: aliasKey) as? [String: String] ?? [:]
@@ -48,6 +57,26 @@ final class AccountRegistry {
 
     func setHidden(_ isHidden: Bool, for accountID: String) {
         if isHidden { hidden.insert(accountID) } else { hidden.remove(accountID) }
+    }
+
+    // MARK: - Menu-bar representative
+
+    func pinnedAccountID(for service: ServiceType) -> String? {
+        pinned[service.rawValue]
+    }
+
+    func isPinned(_ account: ProviderAccount) -> Bool {
+        pinned[account.service.rawValue] == account.id
+    }
+
+    /// Tapping the pinned account again clears the choice and returns to
+    /// "whichever is busiest".
+    func togglePinned(_ account: ProviderAccount) {
+        if pinned[account.service.rawValue] == account.id {
+            pinned.removeValue(forKey: account.service.rawValue)
+        } else {
+            pinned[account.service.rawValue] = account.id
+        }
     }
 
     // MARK: - Aliases

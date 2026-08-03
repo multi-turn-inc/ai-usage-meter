@@ -77,7 +77,8 @@ struct MainPanel: View {
                             CircularGaugeView(
                                 service: service,
                                 compact: gaugeServices.count >= 3,
-                                mini: gaugeServices.count > 3
+                                mini: gaugeServices.count > 3,
+                                onPinChanged: { appState.menuBarNeedsRedraw += 1 }
                             )
                             .opacity(appeared ? 1 : 0)
                             .offset(y: appeared ? 0 : 12)

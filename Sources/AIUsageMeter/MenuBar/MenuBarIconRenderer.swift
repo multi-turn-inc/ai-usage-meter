@@ -86,8 +86,18 @@ enum MenuBarIconRenderer {
         var byType: [ServiceType: ServiceViewModel] = [:]
         for service in services {
             let type = service.config.serviceType
+            // An explicit choice wins: the automatic "busiest account" rule is a
+            // reasonable default but it reassigns itself as usage moves, so the
+            // cell would silently start reporting a different login.
+            if let account = service.account, AccountRegistry.shared.isPinned(account) {
+                byType[type] = service
+                continue
+            }
             guard let incumbent = byType[type] else {
                 byType[type] = service
+                continue
+            }
+            if let pinnedAccount = incumbent.account, AccountRegistry.shared.isPinned(pinnedAccount) {
                 continue
             }
             if pressure(of: service) > pressure(of: incumbent) {

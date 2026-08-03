@@ -66,18 +66,20 @@ class CodexClient: BaseAPIClient, AIServiceAPI {
     private static func windows(from stats: SessionStats) -> [UsageWindow] {
         var windows: [UsageWindow] = []
         if let percent = stats.fiveHourUsagePercent {
-            let minutes = stats.primaryWindowMinutes ?? 300
+            // No invented period: an unknown window is labelled as unknown rather
+            // than asserting "5h" over what may be a weekly number.
+            let label = stats.primaryWindowMinutes.map { UsageWindow.label(forSeconds: $0 * 60) } ?? "—"
             windows.append(UsageWindow(
-                label: UsageWindow.label(forSeconds: minutes * 60),
+                label: label,
                 percent: percent,
                 resetsAt: stats.resetDate,
                 isCritical: percent >= 100
             ))
         }
         if let percent = stats.sevenDayUsagePercent {
-            let minutes = stats.secondaryWindowMinutes ?? 10080
+            let label = stats.secondaryWindowMinutes.map { UsageWindow.label(forSeconds: $0 * 60) } ?? "—"
             windows.append(UsageWindow(
-                label: UsageWindow.label(forSeconds: minutes * 60),
+                label: label,
                 percent: percent,
                 resetsAt: stats.sevenDayResetDate,
                 isCritical: percent >= 100
@@ -367,8 +369,14 @@ class CodexClient: BaseAPIClient, AIServiceAPI {
     }
 
     private func applyRemoteRateLimits(_ snapshot: RemoteRateLimitSnapshot, to stats: inout SessionStats, now: Date) {
+        // Carry the reported window lengths through. Dropping them meant the
+        // labels fell back to an assumed 5h/7d pair, so a weekly window showed
+        // up as "5h" with a reset six days out.
+        if let minutes = snapshot.primaryWindowMinutes { stats.primaryWindowMinutes = minutes }
+        if let minutes = snapshot.secondaryWindowMinutes { stats.secondaryWindowMinutes = minutes }
+
         if let resetTime = snapshot.primaryResetTime {
-            let windowMinutes = snapshot.primaryWindowMinutes ?? 300
+            let windowMinutes = snapshot.primaryWindowMinutes ?? stats.primaryWindowMinutes ?? 300
             stats.resetDate = nextResetDate(after: resetTime, windowMinutes: windowMinutes, now: now)
             if resetTime <= now {
                 stats.fiveHourUsagePercent = 0
@@ -380,7 +388,7 @@ class CodexClient: BaseAPIClient, AIServiceAPI {
         }
 
         if let resetTime = snapshot.secondaryResetTime {
-            let windowMinutes = snapshot.secondaryWindowMinutes ?? 10080
+            let windowMinutes = snapshot.secondaryWindowMinutes ?? stats.secondaryWindowMinutes ?? 10080
             stats.sevenDayResetDate = nextResetDate(after: resetTime, windowMinutes: windowMinutes, now: now)
             if resetTime <= now {
                 stats.sevenDayUsagePercent = 0
