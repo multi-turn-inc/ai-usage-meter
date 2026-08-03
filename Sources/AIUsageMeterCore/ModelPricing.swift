@@ -2,7 +2,7 @@ import Foundation
 
 /// Per-model USD rates (per 1M tokens). Used to estimate what local usage would
 /// cost at API prices — subscription users see it as "API value", not a bill.
-public struct ModelRates {
+public struct ModelRates: Sendable {
     public let input: Double
     public let output: Double
     public var cacheRead: Double = 0
