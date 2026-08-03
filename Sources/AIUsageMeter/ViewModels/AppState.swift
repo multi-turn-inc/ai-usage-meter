@@ -305,8 +305,9 @@ class AppState {
 
     private func setupPlaceholderServices() {
         // One row per *account*, not per provider: a machine commonly holds
-        // several paid logins per provider and each has its own quota.
-        let accounts = AccountDiscovery.discover()
+        // several paid logins per provider and each has its own quota. Accounts
+        // the user hid stay discovered but unmonitored.
+        let accounts = AccountRegistry.shared.visibleAccounts()
         var models: [ServiceViewModel] = accounts.map { account in
             ServiceViewModel(
                 config: ServiceConfig(serviceType: account.service, isEnabled: true),
@@ -325,6 +326,23 @@ class AppState {
         }
 
         services = models
+    }
+
+    /// Rebuilds the rows after accounts are added, removed, or hidden, keeping
+    /// already-fetched usage so visible rows don't flash back to "loading".
+    func reloadAccounts() {
+        let previous = Dictionary(uniqueKeysWithValues: services.compactMap { service in
+            service.account.map { ($0.id, service) }
+        })
+        setupPlaceholderServices()
+        loadPersistedConfiguration()
+        for index in services.indices {
+            guard let id = services[index].account?.id, let old = previous[id] else { continue }
+            services[index].usage = old.usage
+            services[index].lastError = old.lastError
+            services[index].hasLoaded = old.hasLoaded
+        }
+        Task { await refresh(interactive: false) }
     }
 
     private func loadPersistedConfiguration() {
@@ -444,6 +462,7 @@ class AppState {
             case .success(let usage):
                 services[index].usage = usage
                 services[index].lastError = nil
+                services[index].hasLoaded = true
                 services[index].computeDelta()
                 print("📊 Updated \(serviceName): \(usage.usagePercentage)%")
 
@@ -600,16 +619,17 @@ class ServiceViewModel: Identifiable {
     var formattedTokensUsed: String { formatTokens(tokensUsed) }
     var formattedTokensLimit: String { formatTokens(tokensLimit) }
 
-    var isAuthError: Bool {
-        guard let error = lastError else { return false }
-        let lower = error.lowercased()
-        return lower.contains("401") || lower.contains("403")
-            || lower.contains("토큰") || lower.contains("만료")
-            || lower.contains("unauthorized") || lower.contains("token")
-            || lower.contains("scope") || lower.contains("revoke")
-            || lower.contains("api key") || lower.contains("apikey")
-            || lower.contains("재인증") || lower.contains("credential")
-    }
+    /// True once a refresh has succeeded at least once. Until then the row is
+    /// still showing `UsageData.placeholder`, whose zeroes would otherwise render
+    /// as a confident "100% remaining" bar under a "Loading" badge.
+    var hasLoaded: Bool = false
+
+    /// Any failure on a row that has never loaded is an authentication problem in
+    /// practice — a monitor can read usage or it can't. Sniffing the message text
+    /// for keywords silently missed new wordings (a Keychain-grant prompt read as
+    /// "everything is fine, 100% left"), so presence of an error is the signal and
+    /// the text is only used to choose which remedy to suggest.
+    var isAuthError: Bool { lastError != nil }
 
     var status: ServiceStatus {
         if isAuthError { return .critical }

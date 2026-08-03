@@ -154,11 +154,11 @@ struct MainPanel: View {
         appState.services.filter { $0.config.isEnabled }
     }
 
-    /// The top row summarises: one gauge per provider, showing its most
-    /// constrained account — same rule as the menu-bar icon. Five gauges would
-    /// not fit a 300pt panel, and the cards below already list every account.
+    /// One gauge per account. The menu-bar icon collapses to one cell per
+    /// provider because its width is scarce; the panel has room, and seeing each
+    /// login's headroom side by side is the point of tracking several.
     private var gaugeServices: [ServiceViewModel] {
-        MenuBarIconRenderer.mostConstrainedPerService(enabledServices)
+        enabledServices
     }
 
     private func formatLastUpdate(_ date: Date) -> String {

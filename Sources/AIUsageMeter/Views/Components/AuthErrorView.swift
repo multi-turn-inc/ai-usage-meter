@@ -21,12 +21,15 @@ struct AuthErrorView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
 
             HStack(spacing: 8) {
-                Button(action: startBrowserLogin) {
+                // A missing Keychain grant is fixed by retrying with UI allowed,
+                // not by signing in again — offering "log in" there would throw
+                // away a perfectly good credential.
+                Button(action: needsKeychainGrant ? { onRefresh?() } : startBrowserLogin) {
                     HStack(spacing: 6) {
                         if isLoggingIn {
                             ProgressView().controlSize(.small)
                         } else {
-                            Image(systemName: "globe")
+                            Image(systemName: needsKeychainGrant ? "key.fill" : "globe")
                                 .font(.system(size: 11))
                         }
                         Text(isLoggingIn ? "브라우저에서 로그인 중…" : buttonLabel)
@@ -57,7 +60,16 @@ struct AuthErrorView: View {
             || error.contains("/logout")
     }
 
+    /// This account's credentials sit in another app's Keychain item, so the
+    /// first read needs a one-time grant rather than a fresh login.
+    private var needsKeychainGrant: Bool {
+        service.lastError?.contains("키체인") == true
+    }
+
     private var errorMessage: String {
+        if needsKeychainGrant {
+            return "키체인 접근을 한 번 허용하면 계속 표시됩니다."
+        }
         if let error = service.lastError {
             let lower = error.lowercased()
             if lower.contains("scope") || lower.contains("permission") {
@@ -75,10 +87,10 @@ struct AuthErrorView: View {
     }
 
     private var buttonLabel: String {
+        if needsKeychainGrant { return "키체인 접근 허용" }
         switch service.config.serviceType {
-        case .claude: return "브라우저로 로그인"
+        case .claude, .codex: return "브라우저로 로그인"
         case .gemini: return "gemini 인증"
-        case .codex: return "브라우저로 로그인"
         }
     }
 

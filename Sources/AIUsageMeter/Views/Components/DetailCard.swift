@@ -48,6 +48,16 @@ struct DetailCard: View {
             if service.isAuthError {
                 AuthErrorView(service: service, onRefresh: onRefresh)
                     .transition(.opacity.combined(with: .move(edge: .top)))
+            } else if !service.hasLoaded {
+                // Never rendered placeholder zeroes as real numbers: an unloaded
+                // row used to read as a full "100% remaining" bar.
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text(L.updating)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
             } else {
                 // Providers report a varying set of windows — Claude added a
                 // per-model weekly cap (Fable), Codex dropped its 5-hour one —
@@ -159,27 +169,26 @@ struct DetailCard: View {
         return formatReset(service.resetDate)
     }
 
+    /// Time until the window resets, as a bare compact duration ("1h 20m", "3d").
+    ///
+    /// The old "resets in …" sentence didn't survive three windows in a 300pt
+    /// panel — every label truncated to "resets in 13…", which reads as broken
+    /// and hides the number that matters. A clock glyph carries the meaning and
+    /// leaves the whole duration visible.
     private func formatReset(_ date: Date?) -> String? {
-        guard let date = date else { return nil }
-        let interval = date.timeIntervalSinceNow
-        guard interval > 0 else { return nil }
+        guard let date, case let interval = date.timeIntervalSinceNow, interval > 0 else { return nil }
 
-        let totalMinutes = Int(interval / 60)
-        if totalMinutes < 60 {
-            return L.formatResetTime(L.formatMinutes(totalMinutes))
-        }
+        let minutes = Int(interval / 60)
+        if minutes < 60 { return "\(max(1, minutes))m" }
 
         let hours = Int(interval / 3600)
-        let minutes = Int((interval.truncatingRemainder(dividingBy: 3600)) / 60)
-
         if hours < 24 {
-            let timeText = L.formatHoursMinutes(hours, minutes)
-            return L.formatResetTime(timeText)
+            let remainder = Int((interval.truncatingRemainder(dividingBy: 3600)) / 60)
+            return remainder == 0 ? "\(hours)h" : "\(hours)h \(remainder)m"
         }
 
         let days = Int(interval / 86400)
         let remainingHours = Int((interval.truncatingRemainder(dividingBy: 86400)) / 3600)
-        let timeText = L.formatDaysHours(days, remainingHours)
-        return L.formatResetTime(timeText)
+        return remainingHours == 0 ? "\(days)d" : "\(days)d \(remainingHours)h"
     }
 }

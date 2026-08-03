@@ -80,6 +80,20 @@ public enum AccountDiscovery {
 
     public static let orcaClaudeKeychainService = "Orca Claude Code Managed Credentials"
 
+    /// Accounts this app added itself live here, one config home per account.
+    /// Logging in with `CLAUDE_CONFIG_DIR`/`CODEX_HOME` pointed at one of these
+    /// leaves the credentials in a file we own outright — no Keychain, so no
+    /// prompt, ever.
+    public static func selfManagedRoot(home: URL) -> URL {
+        home.appendingPathComponent("Library/Application Support/TokenBurn/accounts")
+    }
+
+    public static func newSelfManagedDir(for service: ServiceType, home: URL) -> URL {
+        selfManagedRoot(home: home)
+            .appendingPathComponent(service.rawValue.lowercased())
+            .appendingPathComponent(UUID().uuidString)
+    }
+
     public static func discover(
         home: URL = FileManager.default.homeDirectoryForCurrentUser
     ) -> [ProviderAccount] {
@@ -118,6 +132,23 @@ public enum AccountDiscovery {
                 isDefault: false,
                 fallbackKey: uuid,
                 configDir: root.appendingPathComponent("\(uuid)/auth").path
+            ))
+        }
+
+        // 3. Accounts this app added — credentials in a file we own, no prompt.
+        let ours = selfManagedRoot(home: home).appendingPathComponent("claude")
+        for uuid in sortedSubdirectories(of: ours) {
+            let dir = ours.appendingPathComponent(uuid)
+            let creds = dir.appendingPathComponent(".credentials.json")
+            guard fm.fileExists(atPath: creds.path) else { continue }
+            let identity = readJSONObject(at: dir.appendingPathComponent(".claude.json"))?["oauthAccount"] as? [String: Any]
+            accounts.append(makeClaudeAccount(
+                id: "claude:own:\(uuid)",
+                identity: identity,
+                source: .file(path: creds.path),
+                isDefault: false,
+                fallbackKey: uuid,
+                configDir: dir.path
             ))
         }
 
@@ -169,6 +200,14 @@ public enum AccountDiscovery {
             let auth = root.appendingPathComponent("\(uuid)/home/auth.json")
             guard fm.fileExists(atPath: auth.path) else { continue }
             accounts.append(makeCodexAccount(id: "codex:orca:\(uuid)", authFile: auth, isDefault: false))
+        }
+
+        // 3. Accounts this app added.
+        let ours = selfManagedRoot(home: home).appendingPathComponent("codex")
+        for uuid in sortedSubdirectories(of: ours) {
+            let auth = ours.appendingPathComponent("\(uuid)/auth.json")
+            guard fm.fileExists(atPath: auth.path) else { continue }
+            accounts.append(makeCodexAccount(id: "codex:own:\(uuid)", authFile: auth, isDefault: false))
         }
 
         return dedupe(accounts)

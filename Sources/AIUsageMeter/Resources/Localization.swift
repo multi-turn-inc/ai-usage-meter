@@ -868,6 +868,66 @@ class LocalizationManager {
         }
     }
 
+    var accounts: String {
+        switch currentLanguage {
+        case .english: return "Accounts"
+        case .korean: return "계정"
+        case .japanese: return "アカウント"
+        case .chinese: return "账户"
+        case .spanish: return "Cuentas"
+        case .french: return "Comptes"
+        case .german: return "Konten"
+        case .portuguese: return "Contas"
+        case .russian: return "Аккаунты"
+        case .italian: return "Account"
+        }
+    }
+
+    var addAccount: String {
+        switch currentLanguage {
+        case .english: return "add"
+        case .korean: return "추가"
+        case .japanese: return "追加"
+        case .chinese: return "添加"
+        case .spanish: return "añadir"
+        case .french: return "ajouter"
+        case .german: return "hinzufügen"
+        case .portuguese: return "adicionar"
+        case .russian: return "добавить"
+        case .italian: return "aggiungi"
+        }
+    }
+
+    var removeAccount: String {
+        switch currentLanguage {
+        case .english: return "Remove this account"
+        case .korean: return "이 계정 삭제"
+        case .japanese: return "このアカウントを削除"
+        case .chinese: return "删除此账户"
+        case .spanish: return "Eliminar esta cuenta"
+        case .french: return "Supprimer ce compte"
+        case .german: return "Dieses Konto entfernen"
+        case .portuguese: return "Remover esta conta"
+        case .russian: return "Удалить этот аккаунт"
+        case .italian: return "Rimuovi questo account"
+        }
+    }
+
+    var noAccountsFound: String {
+        switch currentLanguage {
+        case .english: return "No logins found. Add one below."
+        case .korean: return "로그인된 계정이 없습니다. 아래에서 추가하세요."
+        case .japanese: return "ログイン済みアカウントがありません。下から追加してください。"
+        case .chinese: return "未找到登录账户。请在下方添加。"
+        case .spanish: return "No se encontraron sesiones. Añade una abajo."
+        case .french: return "Aucune connexion trouvée. Ajoutez-en une ci-dessous."
+        case .german: return "Keine Anmeldungen gefunden. Unten eine hinzufügen."
+        case .portuguese: return "Nenhum login encontrado. Adicione um abaixo."
+        case .russian: return "Входы не найдены. Добавьте ниже."
+        case .italian: return "Nessun accesso trovato. Aggiungine uno sotto."
+        }
+    }
+
     var invalidAPIKey: String {
         switch currentLanguage {
         case .english: return "Invalid API key"

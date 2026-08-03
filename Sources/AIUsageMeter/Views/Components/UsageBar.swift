@@ -42,9 +42,15 @@ struct UsageBar: View {
             .frame(height: 7)
 
             if let reset = resetText {
-                Text(reset)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.tertiary)
+                HStack(spacing: 3) {
+                    Image(systemName: "clock")
+                        .font(.system(size: 8, weight: .medium))
+                    Text(reset)
+                        .font(.system(size: 10, weight: .medium))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                }
+                .foregroundStyle(.tertiary)
             }
         }
         .frame(maxWidth: .infinity)

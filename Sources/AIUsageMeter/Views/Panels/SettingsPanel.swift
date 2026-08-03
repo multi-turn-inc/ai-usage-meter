@@ -74,6 +74,11 @@ struct SettingsPanel: View {
                         .premiumCard()
                     }
 
+                    // MARK: - Accounts
+                    settingsSection(title: L.accounts, delay: 0.03) {
+                        accountsCard
+                    }
+
                     // MARK: - General
                     settingsSection(title: L.general, delay: 0.06) {
                         VStack(spacing: 0) {
@@ -340,6 +345,112 @@ struct SettingsPanel: View {
         .onAppear {
             // Seed once; don't clobber an unsaved edit on re-appear.
             if apiKeyDraft.isEmpty { apiKeyDraft = advisor.apiKey ?? "" }
+        }
+    }
+
+    // MARK: - Accounts
+
+    /// Lists every login found on the machine with a monitor toggle. "Remove"
+    /// only hides a discovered account — deleting someone's actual credentials
+    /// isn't this app's call — except for accounts it added itself, whose config
+    /// home it owns.
+    @ViewBuilder
+    private var accountsCard: some View {
+        let registry = AccountRegistry.shared
+        let accounts = registry.allAccounts()
+
+        VStack(spacing: 0) {
+            if accounts.isEmpty {
+                Text(L.noAccountsFound)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+            }
+
+            ForEach(Array(accounts.enumerated()), id: \.element.id) { index, account in
+                if index > 0 { Divider().opacity(0.2).padding(.leading, 40) }
+                HStack(spacing: 10) {
+                    Image(systemName: account.service.iconName)
+                        .font(.system(size: 12))
+                        .foregroundStyle(account.service.brandColor)
+                        .frame(width: 22)
+
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(account.label)
+                            .font(.system(size: 12, weight: .medium))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Text(accountSourceNote(account))
+                            .font(.system(size: 9))
+                            .foregroundStyle(.tertiary)
+                    }
+
+                    Spacer()
+
+                    if registry.canDelete(account) {
+                        Button {
+                            registry.delete(account)
+                            appState.reloadAccounts()
+                        } label: {
+                            Image(systemName: "trash")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help(L.removeAccount)
+                    }
+
+                    Toggle("", isOn: Binding(
+                        get: { !registry.isHidden(account.id) },
+                        set: { shown in
+                            registry.setHidden(!shown, for: account.id)
+                            appState.reloadAccounts()
+                        }
+                    ))
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .tint(account.service.brandColor)
+                }
+                .padding(.vertical, 7)
+                .padding(.horizontal, 8)
+            }
+
+            Divider().opacity(0.2)
+
+            HStack(spacing: 8) {
+                ForEach([ServiceType.claude, ServiceType.codex], id: \.self) { service in
+                    Button {
+                        AccountRegistry.shared.addAccount(service: service) {
+                            appState.reloadAccounts()
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "plus.circle")
+                                .font(.system(size: 10))
+                            Text("\(service.displayName) \(L.addAccount)")
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                    }
+                    .buttonStyle(.glass)
+                    .buttonBorderShape(.capsule)
+                }
+            }
+            .padding(8)
+        }
+        .padding(4)
+        .premiumCard()
+    }
+
+    private func accountSourceNote(_ account: ProviderAccount) -> String {
+        if account.isDefault { return "CLI 기본 계정" }
+        if account.id.contains(":own:") { return "Token Burn에서 추가" }
+        switch account.source {
+        case .file: return "외부 앱 관리 (파일)"
+        case .keychain: return "외부 앱 관리 (키체인)"
         }
     }
 
