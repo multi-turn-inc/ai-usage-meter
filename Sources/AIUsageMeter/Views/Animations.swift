@@ -105,3 +105,14 @@ struct PulseEffect: ViewModifier {
             }
     }
 }
+
+extension View {
+    /// Wraps the view in a scroll view once its natural height exceeds `limit`,
+    /// so a growing list can't push a fixed-size panel off screen.
+    func scrollableIfTallerThan(_ limit: CGFloat) -> some View {
+        ScrollView(.vertical) { self }
+            .frame(maxHeight: limit)
+            .scrollBounceBehavior(.basedOnSize)
+            .scrollIndicators(.automatic)
+    }
+}

@@ -69,16 +69,23 @@ struct MainPanel: View {
                     .padding(.bottom, 10)
             } else {
                 VStack(spacing: 14) {
-                    HStack(spacing: gaugeServices.count >= 3 ? 20 : 32) {
+                    // A grid, not an HStack: five gauges in a row are ~480pt wide
+                    // and the panel is 300, so a row silently clipped the extras
+                    // *and* dragged the cards below out of alignment.
+                    LazyVGrid(columns: gaugeColumns, spacing: 12) {
                         ForEach(Array(gaugeServices.enumerated()), id: \.element.id) { index, service in
-                            CircularGaugeView(service: service, compact: gaugeServices.count >= 3)
-                                .opacity(appeared ? 1 : 0)
-                                .offset(y: appeared ? 0 : 12)
-                                .animation(
-                                    .spring(response: 0.5, dampingFraction: 0.7)
-                                        .delay(Double(index) * 0.08),
-                                    value: appeared
-                                )
+                            CircularGaugeView(
+                                service: service,
+                                compact: gaugeServices.count >= 3,
+                                mini: gaugeServices.count > 3
+                            )
+                            .opacity(appeared ? 1 : 0)
+                            .offset(y: appeared ? 0 : 12)
+                            .animation(
+                                .spring(response: 0.5, dampingFraction: 0.7)
+                                    .delay(Double(index) * 0.08),
+                                value: appeared
+                            )
                         }
                     }
                     .frame(maxWidth: .infinity)
@@ -110,6 +117,10 @@ struct MainPanel: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 10)
+                // Each account adds a card, so the stack grows without bound and
+                // the window can only clip it. Cap the height and scroll instead;
+                // the header and footer stay put.
+                .scrollableIfTallerThan(420)
             }
 
             Divider().opacity(0.3).padding(.horizontal, 16)
@@ -159,6 +170,13 @@ struct MainPanel: View {
     /// login's headroom side by side is the point of tracking several.
     private var gaugeServices: [ServiceViewModel] {
         enabledServices
+    }
+
+    /// Up to three per row so the widest case (five mini gauges) wraps to two
+    /// rows instead of overflowing the fixed-width panel.
+    private var gaugeColumns: [GridItem] {
+        let perRow = min(max(gaugeServices.count, 1), 3)
+        return Array(repeating: GridItem(.flexible(), spacing: 8), count: perRow)
     }
 
     private func formatLastUpdate(_ date: Date) -> String {
