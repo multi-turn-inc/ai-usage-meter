@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 /// One monitorable provider login. A machine can hold several paid accounts per
 /// provider: the CLI's own default plus any a launcher (Orca) keeps in isolated
@@ -80,6 +81,20 @@ public enum AccountDiscovery {
 
     public static let orcaClaudeKeychainService = "Orca Claude Code Managed Credentials"
 
+    /// Claude Code 2.1+ scopes its Keychain item by config dir, appending the
+    /// first 8 hex of sha256(CLAUDE_CONFIG_DIR). Credentials for a custom config
+    /// home therefore live under this name — **not** in a file. Assuming a file
+    /// is what made a freshly added account look like a failed login.
+    public static func claudeScopedKeychainService(forConfigDir dir: String) -> String {
+        let digest = SHA256.hash(data: Data(dir.utf8))
+        let suffix = digest.prefix(4).map { String(format: "%02x", $0) }.joined()
+        return "Claude Code-credentials-\(suffix)"
+    }
+
+    /// Marks a config home this app created, so an abandoned login can be told
+    /// apart from one whose credentials simply live in the Keychain.
+    public static let selfManagedMarker = ".token-burn-account"
+
     /// Accounts this app added itself live here, one config home per account.
     /// Logging in with `CLAUDE_CONFIG_DIR`/`CODEX_HOME` pointed at one of these
     /// leaves the credentials in a file we own outright — no Keychain, so no
@@ -140,12 +155,19 @@ public enum AccountDiscovery {
         for uuid in sortedSubdirectories(of: ours) {
             let dir = ours.appendingPathComponent(uuid)
             let creds = dir.appendingPathComponent(".credentials.json")
-            guard fm.fileExists(atPath: creds.path) else { continue }
+            // The CLI writes to the Keychain on macOS; the file only appears when
+            // something else syncs one. Accept either.
+            let source: ProviderAccount.CredentialSource = fm.fileExists(atPath: creds.path)
+                ? .file(path: creds.path)
+                : .keychain(service: claudeScopedKeychainService(forConfigDir: dir.path),
+                            account: NSUserName())
             let identity = readJSONObject(at: dir.appendingPathComponent(".claude.json"))?["oauthAccount"] as? [String: Any]
+            // An abandoned login leaves the marker but no identity and no creds.
+            guard identity != nil || fm.fileExists(atPath: creds.path) else { continue }
             accounts.append(makeClaudeAccount(
                 id: "claude:own:\(uuid)",
                 identity: identity,
-                source: .file(path: creds.path),
+                source: source,
                 isDefault: false,
                 fallbackKey: uuid,
                 configDir: dir.path

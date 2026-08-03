@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import AIUsageMeterCore
 
 /// Which discovered accounts the user actually wants on screen, plus adding new
@@ -214,15 +215,45 @@ final class AccountRegistry {
         }
     }
 
+    /// Removes the config home only when the login really produced nothing.
+    ///
+    /// The first version checked for a credentials *file* and deleted the home
+    /// when it was missing — which is exactly what a successful Claude login
+    /// looks like, because the CLI stores credentials in the Keychain under a
+    /// name derived from the config dir. That threw away the account the user
+    /// had just signed into and stranded its Keychain item.
     private func discardIfEmpty(_ dir: URL, service: ServiceType) {
-        let marker = switch service {
-        case .claude: dir.appendingPathComponent(".credentials.json")
-        case .codex: dir.appendingPathComponent("auth.json")
-        case .gemini: dir
+        let fm = FileManager.default
+        let succeeded: Bool
+        switch service {
+        case .claude:
+            succeeded = fm.fileExists(atPath: dir.appendingPathComponent(".credentials.json").path)
+                || fm.fileExists(atPath: dir.appendingPathComponent(".claude.json").path)
+                || keychainItemExists(
+                    service: AccountDiscovery.claudeScopedKeychainService(forConfigDir: dir.path),
+                    account: NSUserName())
+        case .codex:
+            succeeded = fm.fileExists(atPath: dir.appendingPathComponent("auth.json").path)
+        case .gemini:
+            succeeded = true
         }
-        if !FileManager.default.fileExists(atPath: marker.path) {
-            try? FileManager.default.removeItem(at: dir)
+        if !succeeded {
+            try? fm.removeItem(at: dir)
         }
+    }
+
+    /// Attribute-only lookup: asks whether the item exists without reading the
+    /// secret, so it never triggers an ACL prompt.
+    private func keychainItemExists(service: String, account: String) -> Bool {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var result: AnyObject?
+        return SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess
     }
 }
 

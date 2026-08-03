@@ -443,7 +443,7 @@ struct SettingsPanel: View {
                 ForEach([ServiceType.claude, ServiceType.codex], id: \.self) { service in
                     Button {
                         AccountRegistry.shared.addAccount(service: service) {
-                            appState.reloadAccounts()
+                            appState.reloadAccounts(interactive: true)
                         }
                     } label: {
                         HStack(spacing: 4) {

@@ -330,7 +330,7 @@ class AppState {
 
     /// Rebuilds the rows after accounts are added, removed, or hidden, keeping
     /// already-fetched usage so visible rows don't flash back to "loading".
-    func reloadAccounts() {
+    func reloadAccounts(interactive: Bool = false) {
         let previous = Dictionary(uniqueKeysWithValues: services.compactMap { service in
             service.account.map { ($0.id, service) }
         })
@@ -342,7 +342,10 @@ class AppState {
             services[index].lastError = old.lastError
             services[index].hasLoaded = old.hasLoaded
         }
-        Task { await refresh(interactive: false) }
+        // A reload that follows the user adding an account is interactive: this
+        // is the one moment a Keychain prompt is expected, so the new row can
+        // resolve immediately instead of sitting on "grant access".
+        Task { await refresh(interactive: interactive) }
     }
 
     private func loadPersistedConfiguration() {

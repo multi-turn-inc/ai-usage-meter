@@ -158,3 +158,48 @@ final class AccountDiscoveryTests: XCTestCase {
         XCTAssertTrue(AccountDiscovery.discover(home: home).isEmpty)
     }
 }
+
+final class ClaudeKeychainScopeTests: XCTestCase {
+
+    // MARK: The Keychain name for a config dir must match what Claude Code writes
+    //
+    // Claude Code 2.1+ stores credentials under
+    // "Claude Code-credentials-<first 8 hex of sha256(CLAUDE_CONFIG_DIR)>".
+    // Getting this wrong is silent: a freshly added account looks like a failed
+    // login because its credentials appear to be missing. The expected value
+    // below was read off a real machine, where the item for /Users/junghunkim/
+    // .claude is "Claude Code-credentials-bb407e4b".
+    func test_scopedServiceName_matchesClaudeCodesScheme() {
+        XCTAssertEqual(
+            AccountDiscovery.claudeScopedKeychainService(forConfigDir: "/Users/junghunkim/.claude"),
+            "Claude Code-credentials-bb407e4b"
+        )
+    }
+
+    func test_scopedServiceName_differsPerConfigDir() {
+        let a = AccountDiscovery.claudeScopedKeychainService(forConfigDir: "/tmp/account-a")
+        let b = AccountDiscovery.claudeScopedKeychainService(forConfigDir: "/tmp/account-b")
+        XCTAssertNotEqual(a, b, "Each config home must map to its own Keychain item")
+    }
+
+    // MARK: A self-added account is found even though its credentials are in the
+    // Keychain rather than a file — the case that made "add account" fail.
+    func test_selfManagedClaudeAccount_isFoundWithKeychainCredentials() {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let dir = root.appendingPathComponent("Library/Application Support/TokenBurn/accounts/claude/acct-1")
+        try! FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        // Claude Code writes this identity file; credentials go to the Keychain.
+        try! #"{"oauthAccount":{"emailAddress":"new@example.com","organizationUuid":"org-9","organizationName":"New Co"}}"#
+            .write(to: dir.appendingPathComponent(".claude.json"), atomically: true, encoding: .utf8)
+
+        let accounts = AccountDiscovery.discoverClaude(home: root)
+
+        XCTAssertEqual(accounts.count, 1, "A Keychain-backed self-added account must still be discovered")
+        XCTAssertEqual(accounts.first?.email, "new@example.com")
+        XCTAssertEqual(
+            accounts.first?.source,
+            .keychain(service: AccountDiscovery.claudeScopedKeychainService(forConfigDir: dir.path),
+                      account: NSUserName())
+        )
+    }
+}
