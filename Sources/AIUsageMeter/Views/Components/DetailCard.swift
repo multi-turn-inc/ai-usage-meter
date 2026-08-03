@@ -49,24 +49,44 @@ struct DetailCard: View {
                 AuthErrorView(service: service, onRefresh: onRefresh)
                     .transition(.opacity.combined(with: .move(edge: .top)))
             } else {
-                HStack(spacing: 16) {
-                    UsageBar(
-                        label: primaryLabel,
-                        percentage: max(0, 100 - (service.fiveHourUsage ?? service.usagePercentage)),
-                        resetText: primaryResetText,
-                        color: service.brandColor
-                    )
-
-                    if let sevenDay = service.sevenDayUsage {
+                // Providers report a varying set of windows — Claude added a
+                // per-model weekly cap (Fable), Codex dropped its 5-hour one —
+                // so render whatever came back rather than a fixed pair.
+                let windows = service.usage.windows
+                if windows.isEmpty {
+                    HStack(spacing: 16) {
                         UsageBar(
-                            label: secondaryLabel,
-                            percentage: max(0, 100 - sevenDay),
-                            resetText: formatReset(service.sevenDayResetDate),
-                            color: service.brandColor.opacity(0.5)
+                            label: primaryLabel,
+                            percentage: max(0, 100 - (service.fiveHourUsage ?? service.usagePercentage)),
+                            resetText: primaryResetText,
+                            color: service.brandColor
                         )
+
+                        if let sevenDay = service.sevenDayUsage {
+                            UsageBar(
+                                label: secondaryLabel,
+                                percentage: max(0, 100 - sevenDay),
+                                resetText: formatReset(service.sevenDayResetDate),
+                                color: service.brandColor.opacity(0.5)
+                            )
+                        }
                     }
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                } else {
+                    HStack(spacing: 14) {
+                        ForEach(Array(windows.enumerated()), id: \.element.id) { index, window in
+                            UsageBar(
+                                label: window.label,
+                                percentage: max(0, 100 - window.percent),
+                                resetText: formatReset(window.resetsAt),
+                                color: window.isCritical
+                                    ? ThemeManager.shared.current.statusDanger
+                                    : service.brandColor.opacity(index == 0 ? 1.0 : 0.5)
+                            )
+                        }
+                    }
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
-                .transition(.opacity.combined(with: .move(edge: .bottom)))
 
                 staleWarningRow
             }

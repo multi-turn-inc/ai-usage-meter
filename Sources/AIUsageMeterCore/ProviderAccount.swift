@@ -33,10 +33,13 @@ public struct ProviderAccount: Identifiable, Sendable, Equatable {
     /// Codex only — sent as the `ChatGPT-Account-Id` header so usage is scoped
     /// to the right workspace.
     public let chatGPTAccountId: String?
+    /// The config home this login lives in (`CLAUDE_CONFIG_DIR` / `CODEX_HOME`),
+    /// so a re-login can be pointed at this account instead of the machine default.
+    public let configDir: String?
 
     public init(id: String, service: ServiceType, email: String?, organizationName: String?,
                 identityKey: String, source: CredentialSource, isDefault: Bool,
-                chatGPTAccountId: String? = nil) {
+                chatGPTAccountId: String? = nil, configDir: String? = nil) {
         self.id = id
         self.service = service
         self.email = email
@@ -45,6 +48,7 @@ public struct ProviderAccount: Identifiable, Sendable, Equatable {
         self.source = source
         self.isDefault = isDefault
         self.chatGPTAccountId = chatGPTAccountId
+        self.configDir = configDir
     }
 
     /// Local part of the email, or a short fallback.
@@ -97,7 +101,8 @@ public enum AccountDiscovery {
                 identity: account,
                 source: .file(path: defaultCreds.path),
                 isDefault: true,
-                fallbackKey: defaultCreds.path
+                fallbackKey: defaultCreds.path,
+                configDir: home.appendingPathComponent(".claude").path
             ))
         }
 
@@ -111,7 +116,8 @@ public enum AccountDiscovery {
                 identity: identity,
                 source: .keychain(service: orcaClaudeKeychainService, account: uuid),
                 isDefault: false,
-                fallbackKey: uuid
+                fallbackKey: uuid,
+                configDir: root.appendingPathComponent("\(uuid)/auth").path
             ))
         }
 
@@ -120,7 +126,7 @@ public enum AccountDiscovery {
 
     private static func makeClaudeAccount(
         id: String, identity: [String: Any]?, source: ProviderAccount.CredentialSource,
-        isDefault: Bool, fallbackKey: String
+        isDefault: Bool, fallbackKey: String, configDir: String
     ) -> ProviderAccount {
         let email = (identity?["emailAddress"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         let orgUuid = identity?["organizationUuid"] as? String
@@ -132,7 +138,7 @@ public enum AccountDiscovery {
         return ProviderAccount(
             id: id, service: .claude, email: email,
             organizationName: prettyOrgName(orgName, email: email),
-            identityKey: key, source: source, isDefault: isDefault
+            identityKey: key, source: source, isDefault: isDefault, configDir: configDir
         )
     }
 
@@ -182,7 +188,8 @@ public enum AccountDiscovery {
             id: id, service: .codex, email: email,
             organizationName: workspaceLabel,
             identityKey: key, source: .file(path: authFile.path),
-            isDefault: isDefault, chatGPTAccountId: workspaceId
+            isDefault: isDefault, chatGPTAccountId: workspaceId,
+            configDir: authFile.deletingLastPathComponent().path
         )
     }
 

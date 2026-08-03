@@ -21,17 +21,22 @@ struct AuthErrorView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
 
             HStack(spacing: 8) {
-                Button(action: openTerminalWithCommand) {
+                Button(action: startBrowserLogin) {
                     HStack(spacing: 6) {
-                        Image(systemName: "terminal.fill")
-                            .font(.system(size: 11))
-                        Text(buttonLabel)
+                        if isLoggingIn {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Image(systemName: "globe")
+                                .font(.system(size: 11))
+                        }
+                        Text(isLoggingIn ? "브라우저에서 로그인 중…" : buttonLabel)
                             .font(.system(size: 12, weight: .semibold))
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 8)
                 }
                 .buttonStyle(.glass)
+                .disabled(isLoggingIn)
 
                 if let onRefresh {
                     Button(action: onRefresh) {
@@ -71,29 +76,33 @@ struct AuthErrorView: View {
 
     private var buttonLabel: String {
         switch service.config.serviceType {
-        case .claude: return needsLogout ? "로그아웃 후 재로그인" : "claude 실행하기"
-        case .gemini: return "gemini auth 실행하기"
-        case .codex: return "codex 실행하기"
+        case .claude: return "브라우저로 로그인"
+        case .gemini: return "gemini 인증"
+        case .codex: return "브라우저로 로그인"
         }
     }
 
-    private func openTerminalWithCommand() {
-        let command: String
-        switch service.config.serviceType {
-        case .claude:
-            command = needsLogout ? "claude /logout && claude" : "claude"
-        case .gemini:
-            command = "gemini"
-        case .codex:
-            command = "codex"
-        }
+    private var isLoggingIn: Bool {
+        CLILoginLauncher.shared.isRunning(service.account?.id
+            ?? "default:\(service.config.serviceType.rawValue)")
+    }
 
-        // Randomized filename prevents symlink pre-placement attacks in the shared
-        // temporary directory.
-        let scriptName = "aimonitor-reauth-\(UUID().uuidString).command"
-        let scriptPath = NSTemporaryDirectory() + scriptName
-        let scriptContent = "#!/bin/bash\necho '🔄 재인증 중...'\n\(command)\necho ''\necho '✅ 완료! 이 창을 닫아도 됩니다.'\nread -p ''\n"
-        try? scriptContent.write(toFile: scriptPath, atomically: true, encoding: .utf8)
+    /// Runs the provider CLI's own browser login as a hidden child process, so
+    /// the user sees the web page and never a Terminal window. Gemini has no
+    /// non-interactive login, so it still gets a terminal.
+    private func startBrowserLogin() {
+        let type = service.config.serviceType
+        guard type != .gemini else { return openTerminalForGemini() }
+
+        CLILoginLauncher.shared.login(service: type, account: service.account) {
+            onRefresh?()
+        }
+    }
+
+    private func openTerminalForGemini() {
+        let scriptPath = NSTemporaryDirectory() + "aimonitor-reauth-\(UUID().uuidString).command"
+        let script = "#!/bin/bash\necho '🔄 재인증 중...'\ngemini\necho ''\necho '✅ 완료! 이 창을 닫아도 됩니다.'\nread -p ''\n"
+        try? script.write(toFile: scriptPath, atomically: true, encoding: .utf8)
         try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptPath)
         NSWorkspace.shared.open(URL(fileURLWithPath: scriptPath))
     }

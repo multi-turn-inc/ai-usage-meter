@@ -23,12 +23,16 @@ class AnthropicClient: BaseAPIClient, AIServiceAPI {
     // MARK: - OAuth Usage Response Models
 
     private struct OAuthUsageResponse: Codable {
-        let fiveHour: UsageWindow?
-        let sevenDay: UsageWindow?
-        let sevenDayOpus: UsageWindow?
-        let sevenDaySonnet: UsageWindow?
-        let sevenDayOAuthApps: UsageWindow?
+        let fiveHour: UsageWindowPayload?
+        let sevenDay: UsageWindowPayload?
+        let sevenDayOpus: UsageWindowPayload?
+        let sevenDaySonnet: UsageWindowPayload?
+        let sevenDayOAuthApps: UsageWindowPayload?
         let extraUsage: ExtraUsage?
+        /// Self-describing list of every active quota window. Preferred over the
+        /// fixed fields above: Anthropic adds windows over time (a per-model
+        /// weekly cap for Fable, for instance) and only this list names them.
+        let limits: [LimitEntry]?
 
         enum CodingKeys: String, CodingKey {
             case fiveHour = "five_hour"
@@ -37,10 +41,39 @@ class AnthropicClient: BaseAPIClient, AIServiceAPI {
             case sevenDaySonnet = "seven_day_sonnet"
             case sevenDayOAuthApps = "seven_day_oauth_apps"
             case extraUsage = "extra_usage"
+            case limits
         }
     }
 
-    private struct UsageWindow: Codable {
+    private struct LimitEntry: Codable {
+        let kind: String?
+        let group: String?
+        let percent: Double?
+        let severity: String?
+        let resetsAt: String?
+        let scope: LimitScope?
+
+        enum CodingKeys: String, CodingKey {
+            case kind, group, percent, severity, scope
+            case resetsAt = "resets_at"
+        }
+    }
+
+    private struct LimitScope: Codable {
+        let model: LimitScopeModel?
+    }
+
+    private struct LimitScopeModel: Codable {
+        let id: String?
+        let displayName: String?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case displayName = "display_name"
+        }
+    }
+
+    private struct UsageWindowPayload: Codable {
         let utilization: Double?
         let resetsAt: String?
 
@@ -313,8 +346,58 @@ class AnthropicClient: BaseAPIClient, AIServiceAPI {
             tier: tierName,
             lastUpdated: now,
             fiveHourUsage: response.fiveHour?.utilization,
-            sevenDayUsage: response.sevenDay?.utilization
+            sevenDayUsage: response.sevenDay?.utilization,
+            windows: Self.windows(from: response, formatter: formatter)
         )
+    }
+
+    /// Turns the reported limits into display windows. Uses the `limits` list
+    /// when present so per-model caps (Fable and whatever follows it) show up
+    /// automatically; falls back to the two legacy fields otherwise.
+    private static func windows(from response: OAuthUsageResponse,
+                                formatter: ISO8601DateFormatter) -> [UsageWindow] {
+        func parseDate(_ raw: String?) -> Date? {
+            guard let raw else { return nil }
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            if let date = formatter.date(from: raw) { return date }
+            formatter.formatOptions = [.withInternetDateTime]
+            return formatter.date(from: raw)
+        }
+
+        if let limits = response.limits, !limits.isEmpty {
+            return limits.compactMap { entry in
+                guard let percent = entry.percent else { return nil }
+                let label: String
+                switch entry.kind {
+                case "session": label = "5h"
+                case "weekly_all": label = "7d"
+                default:
+                    // A scoped cap names the model it applies to.
+                    label = entry.scope?.model?.displayName
+                        ?? entry.scope?.model?.id
+                        ?? (entry.group == "weekly" ? "7d" : entry.kind ?? "?")
+                }
+                return UsageWindow(
+                    label: label,
+                    percent: percent,
+                    resetsAt: parseDate(entry.resetsAt),
+                    isCritical: entry.severity == "critical" || percent >= 100
+                )
+            }
+        }
+
+        var fallback: [UsageWindow] = []
+        if let five = response.fiveHour?.utilization {
+            fallback.append(UsageWindow(label: "5h", percent: five,
+                                        resetsAt: parseDate(response.fiveHour?.resetsAt),
+                                        isCritical: five >= 100))
+        }
+        if let seven = response.sevenDay?.utilization {
+            fallback.append(UsageWindow(label: "7d", percent: seven,
+                                        resetsAt: parseDate(response.sevenDay?.resetsAt),
+                                        isCritical: seven >= 100))
+        }
+        return fallback
     }
 
     // MARK: - Local Tracking (Fallback)

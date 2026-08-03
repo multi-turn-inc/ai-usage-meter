@@ -52,8 +52,38 @@ class CodexClient: BaseAPIClient, AIServiceAPI {
             tier: sessionStats.tier,
             lastUpdated: Date(),
             fiveHourUsage: sessionStats.fiveHourUsagePercent,
-            sevenDayUsage: sessionStats.sevenDayUsagePercent
+            sevenDayUsage: sessionStats.sevenDayUsagePercent,
+            windows: Self.windows(from: sessionStats)
         )
+    }
+
+    /// Labels each window by the duration the backend actually reports.
+    ///
+    /// OpenAI changed this under us: the primary window used to be 5 hours and
+    /// is now weekly (604800s), with no secondary window at all. Hard-coding
+    /// "5h"/"7d" would have kept the old labels on the new data — a weekly
+    /// number displayed as a 5-hour one — so the period is always derived.
+    private static func windows(from stats: SessionStats) -> [UsageWindow] {
+        var windows: [UsageWindow] = []
+        if let percent = stats.fiveHourUsagePercent {
+            let minutes = stats.primaryWindowMinutes ?? 300
+            windows.append(UsageWindow(
+                label: UsageWindow.label(forSeconds: minutes * 60),
+                percent: percent,
+                resetsAt: stats.resetDate,
+                isCritical: percent >= 100
+            ))
+        }
+        if let percent = stats.sevenDayUsagePercent {
+            let minutes = stats.secondaryWindowMinutes ?? 10080
+            windows.append(UsageWindow(
+                label: UsageWindow.label(forSeconds: minutes * 60),
+                percent: percent,
+                resetsAt: stats.sevenDayResetDate,
+                isCritical: percent >= 100
+            ))
+        }
+        return windows
     }
 
     // MARK: - Local Session Analysis
@@ -73,6 +103,10 @@ class CodexClient: BaseAPIClient, AIServiceAPI {
         var tier: String = "Codex"
         var fiveHourUsagePercent: Double?
         var sevenDayUsagePercent: Double?
+        /// Actual reported window lengths — the backend has changed these before,
+        /// so labels are derived from them rather than assumed.
+        var primaryWindowMinutes: Int?
+        var secondaryWindowMinutes: Int?
     }
 
     private struct RemoteRateLimitSnapshot {
@@ -202,6 +236,8 @@ class CodexClient: BaseAPIClient, AIServiceAPI {
         let latestPrimaryResetTime = parsed.rateLimits.primaryResetTime
         let latestSecondaryResetTime = parsed.rateLimits.secondaryResetTime
         let latestPlanType = parsed.rateLimits.planType
+        stats.primaryWindowMinutes = latestPrimaryWindowMinutes
+        stats.secondaryWindowMinutes = latestSecondaryWindowMinutes
 
         if let resetTime = latestPrimaryResetTime {
             let windowMinutes = latestPrimaryWindowMinutes ?? 300
