@@ -13,6 +13,9 @@ import AIUsageMeterCore
 final class AccountRegistry {
     static let shared = AccountRegistry()
 
+    /// Outcome of the most recent "add account", shown in Settings.
+    var addStatus: String?
+
     private let hiddenKey = "hiddenAccountIDs"
     private let dismissedKey = "dismissedAccountIDs"
     private let aliasKey = "accountAliases"
@@ -207,11 +210,42 @@ final class AccountRegistry {
             configDir: dir.path
         )
 
+        addStatus = nil
         CLILoginLauncher.shared.login(service: service, account: pending) { [weak self] in
             // Nothing was written if the user abandoned the browser flow; don't
             // leave an empty home behind to be rediscovered as a broken account.
             self?.discardIfEmpty(dir, service: service)
+            self?.reportAddOutcome(dir: dir, service: service)
             onFinished()
+        }
+    }
+
+    /// Says what the login actually produced.
+    ///
+    /// Signing in again usually lands on the account the browser is already
+    /// signed into, which is one the list already has — dedup then removes the
+    /// new row and "add account" looks like it silently failed. Naming the
+    /// outcome is the difference between a bug and an explanation.
+    private func reportAddOutcome(dir: URL, service: ServiceType) {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: dir.path) else {
+            addStatus = "로그인이 완료되지 않았습니다."
+            return
+        }
+
+        let others = AccountDiscovery.discover().filter { $0.configDir != dir.path }
+        guard let added = AccountDiscovery.discover().first(where: { $0.configDir == dir.path }) else {
+            addStatus = "로그인 결과를 읽지 못했습니다."
+            return
+        }
+
+        if let existing = others.first(where: { $0.identityKey == added.identityKey }) {
+            // Our own redundant home — safe to remove, and leaving it would just
+            // accumulate dead config dirs.
+            try? fm.removeItem(at: dir)
+            addStatus = "이미 등록된 계정입니다: \(displayName(for: existing))"
+        } else {
+            addStatus = "추가됨: \(displayName(for: added))"
         }
     }
 

@@ -460,6 +460,15 @@ struct SettingsPanel: View {
                 }
             }
             .padding(8)
+
+            if let status = registry.addStatus {
+                Text(status)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 8)
+            }
         }
         .padding(4)
         .premiumCard()
