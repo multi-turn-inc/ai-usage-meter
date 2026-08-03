@@ -99,57 +99,11 @@ final class AccountRegistry {
             .filter { !dismissed.contains($0.id) }
     }
 
-    /// Collapses rows that turn out to be the *same login*.
-    ///
-    /// Declared identity can lie. A launcher that switches the active account
-    /// rewrites `~/.claude/.credentials.json` but not the `~/.claude.json`
-    /// metadata beside it, so the default row can carry one account's name and
-    /// another account's token — which showed up as two rows reporting byte-for-
-    /// byte identical usage. The credential is the only thing that can't be
-    /// stale, so identical tokens mean one account.
-    ///
-    /// The surviving row keeps the file-backed source (reading it never prompts)
-    /// but takes its name from the managed twin, whose identity file is written
-    /// alongside the credential and therefore matches it.
+    /// Merges rows that share a credential. The rule lives in Core (and is
+    /// tested there); this only supplies the reader, since Keychain access
+    /// belongs to the app layer.
     private func collapseSharedCredentials(_ accounts: [ProviderAccount]) -> [ProviderAccount] {
-        var byFingerprint: [String: [ProviderAccount]] = [:]
-        var unfingerprinted: [ProviderAccount] = []
-
-        for account in accounts {
-            if let fingerprint = credentialFingerprint(for: account) {
-                byFingerprint[fingerprint, default: []].append(account)
-            } else {
-                unfingerprinted.append(account)
-            }
-        }
-
-        var collapsed: [ProviderAccount] = []
-        for group in byFingerprint.values {
-            guard group.count > 1 else {
-                collapsed.append(group[0])
-                continue
-            }
-            let preferred = group.first { if case .file = $0.source { return true } else { return false } } ?? group[0]
-            let named = group.first { !$0.isDefault && $0.email != nil } ?? preferred
-            collapsed.append(ProviderAccount(
-                id: preferred.id,
-                service: preferred.service,
-                email: named.email,
-                organizationName: named.organizationName,
-                identityKey: named.identityKey,
-                source: preferred.source,
-                isDefault: preferred.isDefault,
-                chatGPTAccountId: preferred.chatGPTAccountId ?? named.chatGPTAccountId,
-                configDir: preferred.configDir
-            ))
-        }
-
-        let ordered = collapsed + unfingerprinted
-        return ordered.sorted {
-            $0.service == $1.service
-                ? ($0.isDefault != $1.isDefault ? $0.isDefault : $0.label < $1.label)
-                : $0.service.rawValue < $1.service.rawValue
-        }
+        AccountDiscovery.mergeByCredential(accounts) { credentialFingerprint(for: $0) }
     }
 
     /// A stable fingerprint of the account's access token, or nil when reading it
@@ -167,7 +121,7 @@ final class AccountRegistry {
             token = (json?["tokens"] as? [String: Any])?["access_token"] as? String
         }
         guard let token, !token.isEmpty else { return nil }
-        return "\(account.service.rawValue):\(SHA256Fingerprint.of(token))"
+        return SHA256Fingerprint.of(token)
     }
 
     /// True when this app owns the account's config home and can delete it.
@@ -233,13 +187,21 @@ final class AccountRegistry {
             return
         }
 
-        let others = AccountDiscovery.discover().filter { $0.configDir != dir.path }
-        guard let added = AccountDiscovery.discover().first(where: { $0.configDir == dir.path }) else {
+        let discovered = AccountDiscovery.discover()
+        guard let added = discovered.first(where: { $0.configDir == dir.path }) else {
             addStatus = "로그인 결과를 읽지 못했습니다."
             return
         }
 
-        if let existing = others.first(where: { $0.identityKey == added.identityKey }) {
+        // Compare by credential, not by declared name: the CLI default can carry
+        // a stale name, and matching on it rejected a genuinely new login as a
+        // duplicate of a row that wasn't the same account at all.
+        let addedPrint = credentialFingerprint(for: added)
+        let existing = discovered.first { other in
+            other.configDir != dir.path && other.service == added.service
+                && addedPrint != nil && credentialFingerprint(for: other) == addedPrint
+        }
+        if let existing {
             // Our own redundant home — safe to remove, and leaving it would just
             // accumulate dead config dirs.
             try? fm.removeItem(at: dir)

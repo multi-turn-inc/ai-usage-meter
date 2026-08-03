@@ -54,38 +54,22 @@ final class AccountDiscoveryTests: XCTestCase {
         XCTAssertEqual(Set(accounts.map(\.organizationName)), ["Personal Co", "Team Co"])
     }
 
-    // MARK: Genuine duplicates (same email AND same org) collapse to one
-    func test_sameEmailSameOrg_collapsesToOneAccount() {
+    // MARK: Discovery keeps rows apart until a credential proves they're one
+    //
+    // Two homes declaring the same email and org are still two homes. They may
+    // hold different logins — declared metadata goes stale — so discovery lists
+    // both and merging waits for evidence.
+    func test_sameDeclaredIdentityInTwoHomes_bothDiscovered() {
         let identity = claudeIdentity(email: "me@example.com", orgUuid: "org-1", orgName: "Only Co")
         let home = makeHome([
             "\(orca)/claude-accounts/aaa/auth/oauth-account.json": identity,
             "\(orca)/claude-accounts/bbb/auth/oauth-account.json": identity,
         ])
 
-        XCTAssertEqual(AccountDiscovery.discoverClaude(home: home).count, 1)
+        XCTAssertEqual(AccountDiscovery.discoverClaude(home: home).count, 2)
     }
 
-    // MARK: The file-backed CLI default wins over a Keychain-backed duplicate
-    //
-    // Reading the default's credentials file never prompts; reading another app's
-    // Keychain item does. When both point at the same login, keep the quiet one.
-    func test_duplicateAcrossDefaultAndManaged_prefersFileBackedDefault() {
-        let home = makeHome([
-            ".claude/.credentials.json": "{}",
-            ".claude.json":
-                #"{"oauthAccount":{"emailAddress":"me@example.com","organizationUuid":"org-1","organizationName":"Only Co"}}"#,
-            "\(orca)/claude-accounts/aaa/auth/oauth-account.json":
-                claudeIdentity(email: "me@example.com", orgUuid: "org-1", orgName: "Only Co"),
-        ])
 
-        let accounts = AccountDiscovery.discoverClaude(home: home)
-
-        XCTAssertEqual(accounts.count, 1)
-        XCTAssertEqual(accounts.first?.id, "claude:default")
-        guard case .file = accounts.first?.source else {
-            return XCTFail("Expected the file-backed source, got \(String(describing: accounts.first?.source))")
-        }
-    }
 
     // MARK: Managed Claude accounts read tokens from Orca's Keychain service
     func test_managedClaudeAccount_usesOrcaKeychainSourceKeyedByUUID() {
@@ -126,19 +110,7 @@ final class AccountDiscoveryTests: XCTestCase {
         XCTAssertEqual(Set(accounts.compactMap(\.chatGPTAccountId)), ["ws-1", "ws-2"])
     }
 
-    // MARK: Same workspace reachable twice collapses, default preferred
-    func test_codex_sameWorkspaceTwice_collapsesToDefault() {
-        let auth = codexAuth(email: "me@example.com", accountId: "ws-1")
-        let home = makeHome([
-            ".codex/auth.json": auth,
-            "\(orca)/codex-accounts/aaa/home/auth.json": auth,
-        ])
 
-        let accounts = AccountDiscovery.discoverCodex(home: home)
-
-        XCTAssertEqual(accounts.count, 1)
-        XCTAssertEqual(accounts.first?.id, "codex:default")
-    }
 
     // MARK: Codex credentials always come from a file — never the Keychain
     func test_codexAccounts_areAlwaysFileBacked() {
@@ -201,5 +173,62 @@ final class ClaudeKeychainScopeTests: XCTestCase {
             .keychain(service: AccountDiscovery.claudeScopedKeychainService(forConfigDir: dir.path),
                       account: NSUserName())
         )
+    }
+}
+
+/// The merge rule, exercised with a stubbed credential reader so it can be
+/// tested without a Keychain.
+final class CredentialMergeTests: XCTestCase {
+
+    private func account(_ id: String, email: String?, org: String?, isDefault: Bool,
+                         source: ProviderAccount.CredentialSource) -> ProviderAccount {
+        ProviderAccount(id: id, service: .claude, email: email, organizationName: org,
+                        identityKey: "\(email ?? "?")|\(org ?? "?")", source: source,
+                        isDefault: isDefault, configDir: "/tmp/\(id)")
+    }
+
+    // MARK: Same token means one account, whatever the rows claim to be called
+    func test_identicalTokens_mergeIntoOneRow() {
+        let a = account("claude:default", email: "stale@example.com", org: "Stale Co",
+                        isDefault: true, source: .file(path: "/tmp/a"))
+        let b = account("claude:orca:x", email: "real@example.com", org: "Real Co",
+                        isDefault: false, source: .keychain(service: "svc", account: "x"))
+
+        let merged = AccountDiscovery.mergeByCredential([a, b]) { _ in "same-token" }
+
+        XCTAssertEqual(merged.count, 1)
+        // Keeps the prompt-free source…
+        guard case .file = merged[0].source else { return XCTFail("Expected the file-backed source") }
+        // …but the name that actually matches the credential.
+        XCTAssertEqual(merged[0].email, "real@example.com")
+        XCTAssertEqual(merged[0].organizationName, "Real Co")
+    }
+
+    // MARK: A genuinely different login is never folded into a stale-named row
+    //
+    // The regression: the CLI default declared one account while holding
+    // another's token, so adding the real account was rejected as a duplicate
+    // and its row disappeared.
+    func test_differentTokens_staySeparateEvenWhenNamesCollide() {
+        let stale = account("claude:default", email: "me@example.com", org: "Silla",
+                            isDefault: true, source: .file(path: "/tmp/a"))
+        let real = account("claude:own:new", email: "me@example.com", org: "Silla",
+                           isDefault: false, source: .keychain(service: "svc", account: "n"))
+
+        let merged = AccountDiscovery.mergeByCredential([stale, real]) { account in
+            account.id == "claude:default" ? "token-overedge" : "token-silla"
+        }
+
+        XCTAssertEqual(merged.count, 2, "Different credentials are different accounts")
+    }
+
+    // MARK: Unreadable credentials are never guessed to be the same account
+    func test_unreadableCredentials_areLeftAlone() {
+        let a = account("claude:orca:a", email: "a@example.com", org: "A",
+                        isDefault: false, source: .keychain(service: "svc", account: "a"))
+        let b = account("claude:orca:b", email: "b@example.com", org: "B",
+                        isDefault: false, source: .keychain(service: "svc", account: "b"))
+
+        XCTAssertEqual(AccountDiscovery.mergeByCredential([a, b]) { _ in nil }.count, 2)
     }
 }

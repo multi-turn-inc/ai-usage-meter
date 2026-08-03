@@ -281,15 +281,79 @@ public enum AccountDiscovery {
         home.appendingPathComponent("Library/Application Support/orca")
     }
 
-    /// One login reachable two ways (CLI default plus a managed home) must appear
-    /// once. The CLI default wins: its credentials sit in a file, so refreshing it
-    /// never triggers a Keychain prompt.
+    /// Merges rows that are the same login, judged by credential rather than by
+    /// declared name.
+    ///
+    /// `fingerprint` returns a stable, non-reversible digest of an account's
+    /// token, or nil when the credential can't be read without prompting. Rows
+    /// whose credentials are unreadable are left alone: guessing that two
+    /// unreadable rows are the same login is how a real account gets hidden.
+    ///
+    /// The survivor keeps the file-backed source, so later reads stay
+    /// prompt-free, but takes its name from a managed twin whose identity file
+    /// is written alongside the credential and therefore matches it.
+    public static func mergeByCredential(
+        _ accounts: [ProviderAccount],
+        fingerprint: (ProviderAccount) -> String?
+    ) -> [ProviderAccount] {
+        var groups: [String: [ProviderAccount]] = [:]
+        var unreadable: [ProviderAccount] = []
+        var order: [String] = []
+
+        for account in accounts {
+            guard let print = fingerprint(account) else {
+                unreadable.append(account)
+                continue
+            }
+            let key = "\(account.service.rawValue):\(print)"
+            if groups[key] == nil { order.append(key) }
+            groups[key, default: []].append(account)
+        }
+
+        var merged: [ProviderAccount] = []
+        for key in order {
+            let group = groups[key]!
+            guard group.count > 1 else {
+                merged.append(group[0])
+                continue
+            }
+            let preferred = group.first { if case .file = $0.source { return true } else { return false } } ?? group[0]
+            let named = group.first { !$0.isDefault && $0.email != nil } ?? preferred
+            merged.append(ProviderAccount(
+                id: preferred.id,
+                service: preferred.service,
+                email: named.email,
+                organizationName: named.organizationName,
+                identityKey: named.identityKey,
+                source: preferred.source,
+                isDefault: preferred.isDefault,
+                chatGPTAccountId: preferred.chatGPTAccountId ?? named.chatGPTAccountId,
+                configDir: preferred.configDir
+            ))
+        }
+
+        return (merged + unreadable).sorted {
+            $0.service == $1.service
+                ? ($0.isDefault != $1.isDefault ? $0.isDefault : $0.label < $1.label)
+                : $0.service.rawValue < $1.service.rawValue
+        }
+    }
+
+    /// Collapses only *exact* duplicates — the same config home found twice.
+    ///
+    /// Deliberately not by declared identity. Metadata goes stale: the CLI
+    /// default's `~/.claude.json` can name one account while the credentials
+    /// beside it belong to another, and treating that name as identity let a
+    /// stale row shadow a real account — adding the genuine login was rejected
+    /// as a "duplicate" of a row that wasn't it. Merging by credential is the
+    /// caller's job (`AccountRegistry`), which can read tokens and compare what
+    /// cannot go stale.
     static func dedupe(_ accounts: [ProviderAccount]) -> [ProviderAccount] {
         var seen = Set<String>()
         var result: [ProviderAccount] = []
         for account in accounts.sorted(by: { lhs, rhs in
             lhs.isDefault && !rhs.isDefault
-        }) where seen.insert(account.identityKey).inserted {
+        }) where seen.insert(account.configDir ?? account.id).inserted {
             result.append(account)
         }
         // Keep discovery order stable for the UI: defaults first, then by label.
