@@ -434,8 +434,15 @@ class AppState {
         let results: [(Int, String, Result<UsageData, Error>)] = await withTaskGroup(
             of: (Int, String, Result<UsageData, Error>).self
         ) { group in
-            for job in jobs {
+            for (position, job) in jobs.enumerated() {
                 group.addTask {
+                    // Stagger the starts. Firing every account at once turned one
+                    // refresh into five near-simultaneous calls to the same
+                    // provider, which is what tripped its rate limiter and left
+                    // whole rows stuck with no data.
+                    if position > 0 {
+                        try? await Task.sleep(nanoseconds: UInt64(position) * 700_000_000)
+                    }
                     // Credential cache is cleared by file watcher on account switch,
                     // no need to clear on every refresh.
                     do {
@@ -478,10 +485,14 @@ class AppState {
                 if let apiError = error as? APIError,
                    case .rateLimitExceeded = apiError {
                     print("⏳ \(serviceName): rate limited, keeping previous data")
-                    // First load still on placeholder ("Loading") — the 5-min
-                    // cycle would leave it stuck, so retry sooner once the limit
-                    // likely cleared, instead of waiting a full interval.
-                    if services[index].usage.tier == "Loading" {
+                    // A row that has real numbers can quietly keep them. A row
+                    // that has never loaded cannot: staying silent left it
+                    // spinning "Updating…" forever with no hint why, which is
+                    // exactly the state a user reads as "broken".
+                    if services[index].hasLoaded {
+                        scheduleRateLimitRetry()
+                    } else {
+                        services[index].lastError = "요청이 많아 잠시 후 다시 시도합니다 (rate limit)"
                         scheduleRateLimitRetry()
                     }
                 } else {

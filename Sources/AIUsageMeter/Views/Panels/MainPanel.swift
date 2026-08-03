@@ -106,14 +106,6 @@ struct MainPanel: View {
                                 )
                         }
                     }
-
-                    TokenUsageView(summary: appState.tokenUsage)
-                        .opacity(appeared ? 1 : 0)
-                        .offset(y: appeared ? 0 : 16)
-                        .animation(
-                            .spring(response: 0.5, dampingFraction: 0.75).delay(0.3),
-                            value: appeared
-                        )
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 10)

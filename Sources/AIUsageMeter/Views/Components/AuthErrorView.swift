@@ -8,8 +8,8 @@ struct AuthErrorView: View {
     var body: some View {
         VStack(spacing: 10) {
             HStack(spacing: 8) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.yellow)
+                Image(systemName: isRateLimited ? "clock.badge" : "exclamationmark.triangle.fill")
+                    .foregroundStyle(isRateLimited ? Color.secondary : Color.yellow)
                     .font(.system(size: 14))
                     .modifier(PulseEffect())
 
@@ -24,12 +24,13 @@ struct AuthErrorView: View {
                 // A missing Keychain grant is fixed by retrying with UI allowed,
                 // not by signing in again — offering "log in" there would throw
                 // away a perfectly good credential.
-                Button(action: needsKeychainGrant ? { onRefresh?() } : startBrowserLogin) {
+                Button(action: (needsKeychainGrant || isRateLimited) ? { onRefresh?() } : startBrowserLogin) {
                     HStack(spacing: 6) {
                         if isLoggingIn {
                             ProgressView().controlSize(.small)
                         } else {
-                            Image(systemName: needsKeychainGrant ? "key.fill" : "globe")
+                            Image(systemName: isRateLimited ? "clock.arrow.circlepath"
+                                                : (needsKeychainGrant ? "key.fill" : "globe"))
                                 .font(.system(size: 11))
                         }
                         Text(isLoggingIn ? "브라우저에서 로그인 중…" : buttonLabel)
@@ -66,7 +67,16 @@ struct AuthErrorView: View {
         service.lastError?.contains("키체인") == true
     }
 
+    /// Throttled by the provider — nothing is wrong with the credentials, so
+    /// offering a re-login here would be actively misleading.
+    private var isRateLimited: Bool {
+        service.lastError?.lowercased().contains("rate limit") == true
+    }
+
     private var errorMessage: String {
+        if isRateLimited {
+            return "요청이 많아 잠시 후 자동으로 다시 시도합니다."
+        }
         if needsKeychainGrant {
             return "키체인 접근을 한 번 허용하면 계속 표시됩니다."
         }
@@ -87,6 +97,7 @@ struct AuthErrorView: View {
     }
 
     private var buttonLabel: String {
+        if isRateLimited { return "다시 시도" }
         if needsKeychainGrant { return "키체인 접근 허용" }
         switch service.config.serviceType {
         case .claude, .codex: return "브라우저로 로그인"

@@ -30,10 +30,83 @@ final class AccountRegistry {
 
     /// Accounts to monitor, in discovery order.
     func visibleAccounts() -> [ProviderAccount] {
-        AccountDiscovery.discover().filter { !hidden.contains($0.id) }
+        allAccounts().filter { !hidden.contains($0.id) }
     }
 
-    func allAccounts() -> [ProviderAccount] { AccountDiscovery.discover() }
+    func allAccounts() -> [ProviderAccount] {
+        collapseSharedCredentials(AccountDiscovery.discover())
+    }
+
+    /// Collapses rows that turn out to be the *same login*.
+    ///
+    /// Declared identity can lie. A launcher that switches the active account
+    /// rewrites `~/.claude/.credentials.json` but not the `~/.claude.json`
+    /// metadata beside it, so the default row can carry one account's name and
+    /// another account's token — which showed up as two rows reporting byte-for-
+    /// byte identical usage. The credential is the only thing that can't be
+    /// stale, so identical tokens mean one account.
+    ///
+    /// The surviving row keeps the file-backed source (reading it never prompts)
+    /// but takes its name from the managed twin, whose identity file is written
+    /// alongside the credential and therefore matches it.
+    private func collapseSharedCredentials(_ accounts: [ProviderAccount]) -> [ProviderAccount] {
+        var byFingerprint: [String: [ProviderAccount]] = [:]
+        var unfingerprinted: [ProviderAccount] = []
+
+        for account in accounts {
+            if let fingerprint = credentialFingerprint(for: account) {
+                byFingerprint[fingerprint, default: []].append(account)
+            } else {
+                unfingerprinted.append(account)
+            }
+        }
+
+        var collapsed: [ProviderAccount] = []
+        for group in byFingerprint.values {
+            guard group.count > 1 else {
+                collapsed.append(group[0])
+                continue
+            }
+            let preferred = group.first { if case .file = $0.source { return true } else { return false } } ?? group[0]
+            let named = group.first { !$0.isDefault && $0.email != nil } ?? preferred
+            collapsed.append(ProviderAccount(
+                id: preferred.id,
+                service: preferred.service,
+                email: named.email,
+                organizationName: named.organizationName,
+                identityKey: named.identityKey,
+                source: preferred.source,
+                isDefault: preferred.isDefault,
+                chatGPTAccountId: preferred.chatGPTAccountId ?? named.chatGPTAccountId,
+                configDir: preferred.configDir
+            ))
+        }
+
+        let ordered = collapsed + unfingerprinted
+        return ordered.sorted {
+            $0.service == $1.service
+                ? ($0.isDefault != $1.isDefault ? $0.isDefault : $0.label < $1.label)
+                : $0.service.rawValue < $1.service.rawValue
+        }
+    }
+
+    /// A stable fingerprint of the account's access token, or nil when reading it
+    /// would prompt. Never returns or logs the token itself.
+    private func credentialFingerprint(for account: ProviderAccount) -> String? {
+        guard let raw = AccountCredentialStore.shared.rawCredentials(for: account, allowImport: false) else {
+            return nil
+        }
+        let token: String?
+        switch account.service {
+        case .claude:
+            token = ClaudeTokenRefresher.decode(raw)?.accessToken
+        case .codex, .gemini:
+            let json = try? JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any]
+            token = (json?["tokens"] as? [String: Any])?["access_token"] as? String
+        }
+        guard let token, !token.isEmpty else { return nil }
+        return "\(account.service.rawValue):\(SHA256Fingerprint.of(token))"
+    }
 
     /// True when this app owns the account's config home and can delete it.
     func canDelete(_ account: ProviderAccount) -> Bool {
@@ -92,5 +165,18 @@ final class AccountRegistry {
         if !FileManager.default.fileExists(atPath: marker.path) {
             try? FileManager.default.removeItem(at: dir)
         }
+    }
+}
+
+import CryptoKit
+
+/// Short, non-reversible fingerprint used to tell credentials apart without ever
+/// holding or logging the secret.
+enum SHA256Fingerprint {
+    static func of(_ value: String) -> String {
+        SHA256.hash(data: Data(value.utf8))
+            .prefix(8)
+            .map { String(format: "%02x", $0) }
+            .joined()
     }
 }
