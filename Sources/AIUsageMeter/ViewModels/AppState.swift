@@ -585,8 +585,10 @@ class ServiceViewModel: Identifiable {
         self.account = account
     }
 
-    /// Label for the account, shown only when a provider has more than one.
-    var accountLabel: String? { account?.label }
+    /// Label for the account, honouring a user-set nickname.
+    var accountLabel: String? {
+        account.map { AccountRegistry.shared.displayName(for: $0) }
+    }
 
     /// Call before updating usage to snapshot the current values.
     func snapshotBeforeRefresh() {

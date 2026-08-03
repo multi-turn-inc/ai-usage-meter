@@ -19,7 +19,7 @@ struct CircularGaugeView: View {
     /// the organization is what tells them apart.
     private var gaugeLabel: String {
         guard let account = service.account else { return service.name }
-        return account.organizationName ?? account.shortName
+        return AccountRegistry.shared.shortDisplayName(for: account)
     }
 
     var body: some View {

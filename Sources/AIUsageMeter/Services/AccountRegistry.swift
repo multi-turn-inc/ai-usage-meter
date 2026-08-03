@@ -13,19 +13,76 @@ final class AccountRegistry {
     static let shared = AccountRegistry()
 
     private let hiddenKey = "hiddenAccountIDs"
+    private let dismissedKey = "dismissedAccountIDs"
+    private let aliasKey = "accountAliases"
 
+    /// Discovered but not monitored — still listed, just switched off.
     private(set) var hidden: Set<String> {
         didSet { AppDefaults.userDefaults.set(Array(hidden), forKey: hiddenKey) }
     }
 
+    /// Removed from the list entirely. Discovery would otherwise keep finding
+    /// these every scan, so the choice has to be remembered rather than acted on
+    /// once.
+    private(set) var dismissed: Set<String> {
+        didSet { AppDefaults.userDefaults.set(Array(dismissed), forKey: dismissedKey) }
+    }
+
+    /// User-chosen names. "hebo1221 · ws 8fa88dcb" identifies nothing at a
+    /// glance; "회사 결제" does.
+    private(set) var aliases: [String: String] {
+        didSet { AppDefaults.userDefaults.set(aliases, forKey: aliasKey) }
+    }
+
     private init() {
         hidden = Set(AppDefaults.userDefaults.stringArray(forKey: hiddenKey) ?? [])
+        dismissed = Set(AppDefaults.userDefaults.stringArray(forKey: dismissedKey) ?? [])
+        aliases = AppDefaults.userDefaults.dictionary(forKey: aliasKey) as? [String: String] ?? [:]
     }
 
     func isHidden(_ accountID: String) -> Bool { hidden.contains(accountID) }
 
     func setHidden(_ isHidden: Bool, for accountID: String) {
         if isHidden { hidden.insert(accountID) } else { hidden.remove(accountID) }
+    }
+
+    // MARK: - Aliases
+
+    func alias(for accountID: String) -> String? {
+        aliases[accountID].flatMap { $0.isEmpty ? nil : $0 }
+    }
+
+    func setAlias(_ alias: String, for accountID: String) {
+        let trimmed = alias.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { aliases.removeValue(forKey: accountID) } else { aliases[accountID] = trimmed }
+    }
+
+    /// What the UI should call this account.
+    func displayName(for account: ProviderAccount) -> String {
+        alias(for: account.id) ?? account.label
+    }
+
+    /// Short form for tight spots such as the gauge caption.
+    func shortDisplayName(for account: ProviderAccount) -> String {
+        alias(for: account.id) ?? account.organizationName ?? account.shortName
+    }
+
+    // MARK: - Removal
+
+    /// Removes an account from the list. A login this app created is deleted
+    /// outright; anything else is only dismissed, because deleting another app's
+    /// credentials isn't this app's call.
+    func remove(_ account: ProviderAccount) {
+        if canDelete(account) {
+            delete(account)
+        } else {
+            dismissed.insert(account.id)
+        }
+        hidden.remove(account.id)
+    }
+
+    func restoreDismissed() {
+        dismissed.removeAll()
     }
 
     /// Accounts to monitor, in discovery order.
@@ -35,6 +92,7 @@ final class AccountRegistry {
 
     func allAccounts() -> [ProviderAccount] {
         collapseSharedCredentials(AccountDiscovery.discover())
+            .filter { !dismissed.contains($0.id) }
     }
 
     /// Collapses rows that turn out to be the *same login*.

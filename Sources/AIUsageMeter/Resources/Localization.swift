@@ -898,6 +898,36 @@ class LocalizationManager {
         }
     }
 
+    var dismissAccount: String {
+        switch currentLanguage {
+        case .english: return "Remove from the list"
+        case .korean: return "목록에서 제거"
+        case .japanese: return "リストから削除"
+        case .chinese: return "从列表中移除"
+        case .spanish: return "Quitar de la lista"
+        case .french: return "Retirer de la liste"
+        case .german: return "Aus der Liste entfernen"
+        case .portuguese: return "Remover da lista"
+        case .russian: return "Убрать из списка"
+        case .italian: return "Rimuovi dall'elenco"
+        }
+    }
+
+    var restoreRemoved: String {
+        switch currentLanguage {
+        case .english: return "Restore removed accounts"
+        case .korean: return "제거한 계정 되돌리기"
+        case .japanese: return "削除したアカウントを戻す"
+        case .chinese: return "恢复已移除的账户"
+        case .spanish: return "Restaurar cuentas quitadas"
+        case .french: return "Restaurer les comptes retirés"
+        case .german: return "Entfernte Konten wiederherstellen"
+        case .portuguese: return "Restaurar contas removidas"
+        case .russian: return "Вернуть удалённые аккаунты"
+        case .italian: return "Ripristina account rimossi"
+        }
+    }
+
     var removeAccount: String {
         switch currentLanguage {
         case .english: return "Remove this account"

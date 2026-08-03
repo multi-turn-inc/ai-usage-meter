@@ -377,10 +377,12 @@ struct SettingsPanel: View {
                         .frame(width: 22)
 
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(account.label)
+                        // Editable nickname. The discovered label stays as the
+                        // placeholder so clearing the field reverts to it.
+                        TextField(account.label, text: aliasBinding(for: account))
+                            .textFieldStyle(.plain)
                             .font(.system(size: 12, weight: .medium))
                             .lineLimit(1)
-                            .truncationMode(.middle)
                         Text(accountSourceNote(account))
                             .font(.system(size: 9))
                             .foregroundStyle(.tertiary)
@@ -388,18 +390,16 @@ struct SettingsPanel: View {
 
                     Spacer()
 
-                    if registry.canDelete(account) {
-                        Button {
-                            registry.delete(account)
-                            appState.reloadAccounts()
-                        } label: {
-                            Image(systemName: "trash")
-                                .font(.system(size: 10))
-                                .foregroundStyle(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                        .help(L.removeAccount)
+                    Button {
+                        registry.remove(account)
+                        appState.reloadAccounts()
+                    } label: {
+                        Image(systemName: "trash")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
                     }
+                    .buttonStyle(.plain)
+                    .help(registry.canDelete(account) ? L.removeAccount : L.dismissAccount)
 
                     Toggle("", isOn: Binding(
                         get: { !registry.isHidden(account.id) },
@@ -415,6 +415,26 @@ struct SettingsPanel: View {
                 }
                 .padding(.vertical, 7)
                 .padding(.horizontal, 8)
+            }
+
+            if !registry.dismissed.isEmpty {
+                Divider().opacity(0.2)
+                Button {
+                    registry.restoreDismissed()
+                    appState.reloadAccounts()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.uturn.backward")
+                            .font(.system(size: 9))
+                        Text("\(L.restoreRemoved) (\(registry.dismissed.count))")
+                            .font(.system(size: 10))
+                    }
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                }
+                .buttonStyle(.plain)
             }
 
             Divider().opacity(0.2)
@@ -443,6 +463,13 @@ struct SettingsPanel: View {
         }
         .padding(4)
         .premiumCard()
+    }
+
+    private func aliasBinding(for account: ProviderAccount) -> Binding<String> {
+        Binding(
+            get: { AccountRegistry.shared.alias(for: account.id) ?? "" },
+            set: { AccountRegistry.shared.setAlias($0, for: account.id) }
+        )
     }
 
     private func accountSourceNote(_ account: ProviderAccount) -> String {
