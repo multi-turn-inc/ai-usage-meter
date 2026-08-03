@@ -191,16 +191,36 @@ class AnthropicClient: BaseAPIClient, AIServiceAPI {
         } catch let error as APIError {
             switch error {
             case .unauthorized, .httpError(401, _), .httpError(403, _):
-                // Stale because the owning app hasn't used this login lately.
-                // It refreshes itself the next time that app runs.
+                // A login this app created has no other owner, so renewing it is
+                // both safe and the only thing that can renew it: no CLI ever runs
+                // in that config home, so the token would otherwise stay dead.
+                if account.isSelfManaged,
+                   let renewed = try? await renew(credentials, for: account) {
+                    return try await fetchOAuthUsage(accessToken: renewed.accessToken,
+                                                     tier: renewed.rateLimitTier)
+                }
                 throw APIError.httpError(
                     statusCode: 401,
-                    message: "\(account.label): 토큰이 만료됨 — 해당 계정을 한 번 사용하면 자동 복구됩니다"
+                    message: account.isSelfManaged
+                        ? "\(account.label): 로그인이 만료되었습니다 — 다시 로그인해 주세요"
+                        : "\(account.label): 토큰이 만료됨 — 해당 계정을 한 번 사용하면 자동 복구됩니다"
                 )
             default:
                 throw error
             }
         }
+    }
+
+    /// Refreshes a self-owned login and keeps the result.
+    private func renew(_ credentials: ClaudeCodeCredentials,
+                       for account: ProviderAccount) async throws -> ClaudeCodeCredentials {
+        let renewed = try await ClaudeTokenRefresher.refresh(credentials)
+        // Store before use: a rotating refresh token that is spent but not saved
+        // locks the account out for good.
+        if let json = ClaudeTokenRefresher.encode(renewed) {
+            await AccountCredentialStore.shared.store(json, for: account)
+        }
+        return renewed
     }
 
     // MARK: - OAuth API

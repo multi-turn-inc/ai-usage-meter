@@ -85,15 +85,24 @@ struct AuthErrorView: View {
             if lower.contains("scope") || lower.contains("permission") {
                 return "토큰 권한이 부족합니다. 로그아웃 후 재로그인해주세요."
             }
-            if lower.contains("만료") || lower.contains("expired") || lower.contains("revoke") {
-                return "토큰이 만료되었습니다. 재로그인해주세요."
-            }
+            // Say what actually went wrong. These messages already distinguish a
+            // login this app can renew from one only another app can, and which
+            // account is involved — rewriting them all into "authentication
+            // required" sent the user to a re-login that often fixed nothing.
+            if !stripped(error).isEmpty { return stripped(error) }
         }
         switch service.config.serviceType {
         case .claude: return "Claude 인증이 필요합니다."
         case .gemini: return "Gemini 인증이 필요합니다."
         case .codex: return "Codex 인증이 필요합니다."
         }
+    }
+
+    /// Drops the leading account label: the card names the account already.
+    private func stripped(_ error: String) -> String {
+        guard let label = service.account?.label,
+              error.hasPrefix("\(label): ") else { return error }
+        return String(error.dropFirst(label.count + 2))
     }
 
     private var buttonLabel: String {

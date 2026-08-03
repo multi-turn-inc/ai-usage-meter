@@ -124,6 +124,52 @@ final class AccountDiscoveryTests: XCTestCase {
         }
     }
 
+    // MARK: The default account follows whichever store was written last
+    //
+    // The regression this guards: Claude Code 2.1 moved credentials from
+    // ~/.claude/.credentials.json into a scoped Keychain item and stopped writing
+    // the file. Machines upgraded from an older version still have that file,
+    // frozen at the token it held on upgrade day. Preferring it because it exists
+    // reports a login that expired long ago and cannot recover — signing in again
+    // writes the Keychain item, which was never read.
+    func test_defaultAccount_prefersKeychainWhenItWasWrittenMoreRecently() {
+        let home = makeHome([".claude/.credentials.json": #"{"claudeAiOauth":{"accessToken":"old"}}"#])
+        let configDir = home.appendingPathComponent(".claude").path
+        let expected = AccountDiscovery.claudeScopedKeychainService(forConfigDir: configDir)
+
+        let accounts = AccountDiscovery.discoverClaude(home: home) { service, _ in
+            service == expected ? Date().addingTimeInterval(3600) : nil
+        }
+
+        XCTAssertEqual(accounts.first?.source, .keychain(service: expected, account: NSUserName()))
+    }
+
+    func test_defaultAccount_keepsTheFileWhileItIsTheFresherStore() {
+        let home = makeHome([".claude/.credentials.json": #"{"claudeAiOauth":{"accessToken":"live"}}"#])
+        let credentials = home.appendingPathComponent(".claude/.credentials.json").path
+
+        let accounts = AccountDiscovery.discoverClaude(home: home) { _, _ in
+            Date().addingTimeInterval(-86_400)
+        }
+
+        XCTAssertEqual(accounts.first?.source, .file(path: credentials),
+                       "A current file must not be abandoned for an older Keychain item")
+    }
+
+    // MARK: A machine that only ever had the Keychain item still has an account
+    func test_defaultAccount_isFoundWithNoCredentialsFileAtAll() {
+        let home = makeHome([".claude.json": #"{"oauthAccount":{"emailAddress":"me@example.com"}}"#])
+        let expected = AccountDiscovery.claudeScopedKeychainService(
+            forConfigDir: home.appendingPathComponent(".claude").path)
+
+        let accounts = AccountDiscovery.discoverClaude(home: home) { service, _ in
+            service == expected ? Date() : nil
+        }
+
+        XCTAssertEqual(accounts.count, 1)
+        XCTAssertEqual(accounts.first?.email, "me@example.com")
+    }
+
     // MARK: An empty machine yields no accounts rather than placeholders
     func test_noCredentials_yieldsNoAccounts() {
         let home = makeHome([:])

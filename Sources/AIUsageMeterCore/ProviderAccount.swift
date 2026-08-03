@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import Security
 
 /// One monitorable provider login. A machine can hold several paid accounts per
 /// provider: the CLI's own default plus any a launcher (Orca) keeps in isolated
@@ -52,6 +53,14 @@ public struct ProviderAccount: Identifiable, Sendable, Equatable {
         self.configDir = configDir
     }
 
+    /// True when this app created the login itself, in a config home it owns.
+    ///
+    /// It matters for token handling: nobody else holds these credentials, so
+    /// refreshing them — which rotates the refresh token — cannot log anyone out
+    /// of an account they work in. For every other account that same refresh
+    /// would do exactly that.
+    public var isSelfManaged: Bool { id.contains(":own:") }
+
     /// Local part of the email, or a short fallback.
     public var shortName: String {
         guard let email, let at = email.firstIndex(of: "@") else {
@@ -81,6 +90,24 @@ public enum AccountDiscovery {
 
     public static let orcaClaudeKeychainService = "Orca Claude Code Managed Credentials"
 
+    /// Reads only the item's modification date. `kSecReturnAttributes` without
+    /// `kSecReturnData` never touches the secret, so this is safe to call for
+    /// items owned by other apps: no ACL check, no password prompt.
+    public static let defaultKeychainModified: KeychainTimestampReader = { service, account in
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var result: AnyObject?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let attributes = result as? [String: Any] else { return nil }
+        return (attributes[kSecAttrModificationDate as String] as? Date)
+            ?? (attributes[kSecAttrCreationDate as String] as? Date)
+    }
+
     /// Claude Code 2.1+ scopes its Keychain item by config dir, appending the
     /// first 8 hex of sha256(CLAUDE_CONFIG_DIR). Credentials for a custom config
     /// home therefore live under this name — **not** in a file. Assuming a file
@@ -109,29 +136,54 @@ public enum AccountDiscovery {
             .appendingPathComponent(UUID().uuidString)
     }
 
+    /// When a Keychain item was last written, or nil if there is no such item.
+    /// Attribute-only, so it never reads the secret and never prompts.
+    public typealias KeychainTimestampReader = @Sendable (_ service: String, _ account: String) -> Date?
+
     public static func discover(
-        home: URL = FileManager.default.homeDirectoryForCurrentUser
+        home: URL = FileManager.default.homeDirectoryForCurrentUser,
+        keychainModified: @escaping KeychainTimestampReader = defaultKeychainModified
     ) -> [ProviderAccount] {
-        discoverClaude(home: home) + discoverCodex(home: home)
+        discoverClaude(home: home, keychainModified: keychainModified) + discoverCodex(home: home)
     }
 
     // MARK: - Claude
 
-    public static func discoverClaude(home: URL) -> [ProviderAccount] {
+    public static func discoverClaude(
+        home: URL,
+        keychainModified: @escaping KeychainTimestampReader = defaultKeychainModified
+    ) -> [ProviderAccount] {
         var accounts: [ProviderAccount] = []
         let fm = FileManager.default
 
-        // 1. CLI default — credentials in a file, so reading never prompts.
-        let defaultCreds = home.appendingPathComponent(".claude/.credentials.json")
-        if fm.fileExists(atPath: defaultCreds.path) {
+        // 1. CLI default. Older Claude Code kept credentials in a file; 2.1+ moved
+        // them to a scoped Keychain item and stopped touching the file. A machine
+        // that has been through both keeps the file — frozen at whatever token it
+        // held on upgrade day — so trusting it because it exists means reporting a
+        // login that expired months ago and can never recover, no matter how often
+        // the user signs in again. Whichever store was written last is the live one.
+        let configDir = home.appendingPathComponent(".claude")
+        let defaultCreds = configDir.appendingPathComponent(".credentials.json")
+        let scopedService = claudeScopedKeychainService(forConfigDir: configDir.path)
+        let fileWrittenAt = (try? fm.attributesOfItem(atPath: defaultCreds.path)[.modificationDate]) as? Date
+        let keychainWrittenAt = keychainModified(scopedService, NSUserName())
+
+        if fileWrittenAt != nil || keychainWrittenAt != nil {
+            let preferKeychain: Bool = {
+                guard let keychainWrittenAt else { return false }
+                guard let fileWrittenAt else { return true }
+                return keychainWrittenAt > fileWrittenAt
+            }()
             let account = readJSONObject(at: home.appendingPathComponent(".claude.json"))?["oauthAccount"] as? [String: Any]
             accounts.append(makeClaudeAccount(
                 id: "claude:default",
                 identity: account,
-                source: .file(path: defaultCreds.path),
+                source: preferKeychain
+                    ? .keychain(service: scopedService, account: NSUserName())
+                    : .file(path: defaultCreds.path),
                 isDefault: true,
                 fallbackKey: defaultCreds.path,
-                configDir: home.appendingPathComponent(".claude").path
+                configDir: configDir.path
             ))
         }
 

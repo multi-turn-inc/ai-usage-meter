@@ -70,9 +70,12 @@ final class CLILoginLauncher {
             Task { @MainActor in
                 self?.inFlight.remove(key)
                 self?.processes[key] = nil
-                // The CLI just rewrote this account's credentials; drop the
-                // imported copy so the next read picks up the new ones.
-                if let account { AccountCredentialStore.shared.refreshImportedCopy(for: account) }
+                // The CLI just rewrote this account's credentials. Pick them up
+                // now, while the user is still here and a Keychain grant is in
+                // context — only discarding our copy would leave the account with
+                // nothing readable, so a completed login would show up as an
+                // authentication failure.
+                if let account { AccountCredentialStore.shared.reimport(account) }
                 onFinished()
             }
         }
