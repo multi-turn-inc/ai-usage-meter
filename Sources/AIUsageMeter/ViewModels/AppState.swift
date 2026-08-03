@@ -414,11 +414,14 @@ class AppState {
         // client is used by exactly one task and never touched again from
         // MainActor, so isolated ownership is safe.
         struct Job {
-            let index: Int
+            /// The row's stable id, not its position. Positions go stale the
+            /// moment the account list changes — deleting an account mid-refresh
+            /// left results pointing past the end of the array.
+            let id: UUID
             let name: String
             let client: AIServiceAPI
         }
-        let jobs: [Job] = services.enumerated().compactMap { (index, service) in
+        let jobs: [Job] = services.compactMap { service in
             guard service.config.isEnabled else {
                 print("⏭️ Skipping disabled service: \(service.name)")
                 return nil
@@ -426,7 +429,7 @@ class AppState {
             let label = service.accountLabel.map { "\(service.name) (\($0))" } ?? service.name
             print("📡 Fetching: \(label)")
             return Job(
-                index: index,
+                id: service.id,
                 name: label,
                 client: Self.createAPIClient(for: service.config,
                                              interactive: interactive,
@@ -434,8 +437,8 @@ class AppState {
             )
         }
 
-        let results: [(Int, String, Result<UsageData, Error>)] = await withTaskGroup(
-            of: (Int, String, Result<UsageData, Error>).self
+        let results: [(UUID, String, Result<UsageData, Error>)] = await withTaskGroup(
+            of: (UUID, String, Result<UsageData, Error>).self
         ) { group in
             for (position, job) in jobs.enumerated() {
                 group.addTask {
@@ -451,15 +454,15 @@ class AppState {
                     do {
                         let usage = try await job.client.fetchUsage()
                         print("✅ \(job.name): \(usage.usagePercentage)%")
-                        return (job.index, job.name, .success(usage))
+                        return (job.id, job.name, .success(usage))
                     } catch {
                         print("❌ \(job.name) error: \(error)")
-                        return (job.index, job.name, .failure(error))
+                        return (job.id, job.name, .failure(error))
                     }
                 }
             }
 
-            var collected: [(Int, String, Result<UsageData, Error>)] = []
+            var collected: [(UUID, String, Result<UsageData, Error>)] = []
             for await result in group {
                 collected.append(result)
             }
@@ -467,7 +470,9 @@ class AppState {
         }
 
         var errors: [String] = []
-        for (index, serviceName, result) in results {
+        for (id, serviceName, result) in results {
+            // The row may have been removed while the request was in flight.
+            guard let index = services.firstIndex(where: { $0.id == id }) else { continue }
             switch result {
             case .success(let usage):
                 services[index].usage = usage
