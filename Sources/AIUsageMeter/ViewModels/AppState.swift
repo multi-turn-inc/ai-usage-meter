@@ -304,12 +304,27 @@ class AppState {
     }
 
     private func setupPlaceholderServices() {
-        services = ServiceType.allCases.map { type in
+        // One row per *account*, not per provider: a machine commonly holds
+        // several paid logins per provider and each has its own quota.
+        let accounts = AccountDiscovery.discover()
+        var models: [ServiceViewModel] = accounts.map { account in
             ServiceViewModel(
-                config: ServiceConfig(serviceType: type, isEnabled: type != .gemini),
-                usage: UsageData.placeholder(for: type)
+                config: ServiceConfig(serviceType: account.service, isEnabled: true),
+                usage: UsageData.placeholder(for: account.service),
+                account: account
             )
         }
+
+        // Providers we can't discover (Gemini) — and a cold-start machine with no
+        // logins at all — still need their rows so the UI and settings work.
+        for type in ServiceType.allCases where !accounts.contains(where: { $0.service == type }) {
+            models.append(ServiceViewModel(
+                config: ServiceConfig(serviceType: type, isEnabled: type != .gemini && accounts.isEmpty),
+                usage: UsageData.placeholder(for: type)
+            ))
+        }
+
+        services = models
     }
 
     private func loadPersistedConfiguration() {
@@ -318,7 +333,14 @@ class AppState {
             for index in services.indices {
                 let type = services[index].config.serviceType
                 if let stored = persistedConfigs.first(where: { $0.serviceType == type }) {
-                    services[index].config = stored
+                    // Copy the per-provider settings but keep each account's own
+                    // identity — several accounts share a service type, and
+                    // adopting the stored id wholesale would collapse them.
+                    services[index].config.apiKey = stored.apiKey
+                    services[index].config.organizationId = stored.organizationId
+                    services[index].config.isEnabled = stored.isEnabled
+                    services[index].config.refreshInterval = stored.refreshInterval
+                    services[index].config.notificationThreshold = stored.notificationThreshold
                 }
             }
         }
@@ -380,11 +402,14 @@ class AppState {
                 print("⏭️ Skipping disabled service: \(service.name)")
                 return nil
             }
-            print("📡 Fetching: \(service.name)")
+            let label = service.accountLabel.map { "\(service.name) (\($0))" } ?? service.name
+            print("📡 Fetching: \(label)")
             return Job(
                 index: index,
-                name: service.name,
-                client: Self.createAPIClient(for: service.config, interactive: interactive)
+                name: label,
+                client: Self.createAPIClient(for: service.config,
+                                             interactive: interactive,
+                                             account: service.account)
             )
         }
 
@@ -490,12 +515,14 @@ class AppState {
 
     /// nonisolated so the refresh TaskGroup can build clients up-front on the
     /// main actor and hand them off; it doesn't touch AppState.
-    nonisolated static func createAPIClient(for config: ServiceConfig, interactive: Bool) -> AIServiceAPI {
+    nonisolated static func createAPIClient(
+        for config: ServiceConfig, interactive: Bool, account: ProviderAccount? = nil
+    ) -> AIServiceAPI {
         switch config.serviceType {
         case .claude:
-            return AnthropicClient(config: config, allowKeychainInteraction: interactive)
+            return AnthropicClient(config: config, allowKeychainInteraction: interactive, account: account)
         case .codex:
-            return CodexClient(config: config)
+            return CodexClient(config: config, account: account)
         case .gemini:
             return GeminiClient(config: config)
         }
@@ -509,6 +536,9 @@ class ServiceViewModel: Identifiable {
     var config: ServiceConfig
     var usage: UsageData
     var lastError: String?
+    /// The specific login this row reports on. nil for providers we can't
+    /// enumerate (Gemini) or a machine with no logins yet.
+    let account: ProviderAccount?
 
     var fiveHourDelta: Double = 0
     var sevenDayDelta: Double = 0
@@ -518,11 +548,15 @@ class ServiceViewModel: Identifiable {
     private var previousFiveHourUsage: Double?
     private var previousSevenDayUsage: Double?
 
-    init(config: ServiceConfig, usage: UsageData) {
+    init(config: ServiceConfig, usage: UsageData, account: ProviderAccount? = nil) {
         self.id = config.id
         self.config = config
         self.usage = usage
+        self.account = account
     }
+
+    /// Label for the account, shown only when a provider has more than one.
+    var accountLabel: String? { account?.label }
 
     /// Call before updating usage to snapshot the current values.
     func snapshotBeforeRefresh() {

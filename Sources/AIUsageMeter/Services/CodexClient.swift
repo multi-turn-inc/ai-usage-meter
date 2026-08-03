@@ -3,11 +3,27 @@ import AIUsageMeterCore
 
 class CodexClient: BaseAPIClient, AIServiceAPI {
     private let codexHome: String
+    /// When set, this client reports one specific workspace rather than the
+    /// machine's default Codex login.
+    private let account: ProviderAccount?
 
     override init(config: ServiceConfig) {
         // CODEX_HOME defaults to ~/.codex
         self.codexHome = ProcessInfo.processInfo.environment["CODEX_HOME"]
             ?? NSHomeDirectory() + "/.codex"
+        self.account = nil
+        super.init(config: config)
+    }
+
+    init(config: ServiceConfig, account: ProviderAccount?) {
+        self.account = account
+        // A managed account keeps its whole CODEX_HOME beside its auth.json.
+        if case .file(let path) = account?.source {
+            self.codexHome = (path as NSString).deletingLastPathComponent
+        } else {
+            self.codexHome = ProcessInfo.processInfo.environment["CODEX_HOME"]
+                ?? NSHomeDirectory() + "/.codex"
+        }
         super.init(config: config)
     }
 
@@ -241,6 +257,8 @@ class CodexClient: BaseAPIClient, AIServiceAPI {
     private struct CodexAuthInfo {
         let accessToken: String
         let baseURL: URL?
+        /// ChatGPT workspace this token belongs to, sent as `ChatGPT-Account-Id`.
+        let chatGPTAccountId: String?
     }
 
     private func fetchRemoteRateLimits() async throws -> RemoteRateLimitSnapshot? {
@@ -254,14 +272,18 @@ class CodexClient: BaseAPIClient, AIServiceAPI {
         for baseURL in baseCandidates {
             for endpoint in usageEndpointCandidates(for: baseURL) {
                 do {
-                    let (data, _) = try await performRequest(
-                        url: endpoint,
-                        headers: [
-                            "Authorization": "Bearer \(authInfo.accessToken)",
-                            "Accept": "application/json",
-                            "User-Agent": "AIUsageMeter/1.0"
-                        ]
-                    )
+                    var headers = [
+                        "Authorization": "Bearer \(authInfo.accessToken)",
+                        "Accept": "application/json",
+                        "User-Agent": "AIUsageMeter/1.0"
+                    ]
+                    // One ChatGPT login can own several workspaces that bill
+                    // separately; without this header the backend answers for
+                    // the default one and every workspace looks identical.
+                    if let workspace = account?.chatGPTAccountId ?? authInfo.chatGPTAccountId {
+                        headers["ChatGPT-Account-Id"] = workspace
+                    }
+                    let (data, _) = try await performRequest(url: endpoint, headers: headers)
 
                     if let snapshot = decodeRateLimitSnapshot(from: data) {
                         return snapshot
@@ -369,7 +391,8 @@ class CodexClient: BaseAPIClient, AIServiceAPI {
             ?? (json["baseURL"] as? String)
 
         let baseURL = baseURLString.flatMap { URL(string: $0) }
-        return CodexAuthInfo(accessToken: token, baseURL: baseURL)
+        let workspace = (json["tokens"] as? [String: Any])?["account_id"] as? String
+        return CodexAuthInfo(accessToken: token, baseURL: baseURL, chatGPTAccountId: workspace)
     }
 
     /// Returns true if `url` is allowed to receive the Bearer token.

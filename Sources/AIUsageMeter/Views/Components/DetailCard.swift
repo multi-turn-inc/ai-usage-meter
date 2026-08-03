@@ -11,8 +11,19 @@ struct DetailCard: View {
                     .fill(service.isAuthError ? ThemeManager.shared.current.statusDanger : service.brandColor)
                     .frame(width: 8, height: 8)
 
-                Text(service.name)
-                    .font(.system(size: 14, weight: .semibold))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(service.name)
+                        .font(.system(size: 14, weight: .semibold))
+                    // Only meaningful when a provider has more than one login;
+                    // with a single account the provider name already says it.
+                    if let accountLabel = service.accountLabel {
+                        Text(accountLabel)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
 
                 Spacer()
 

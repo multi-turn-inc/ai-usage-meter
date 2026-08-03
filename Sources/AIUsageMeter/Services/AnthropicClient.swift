@@ -1,16 +1,22 @@
 import Foundation
+import AIUsageMeterCore
 
 class AnthropicClient: BaseAPIClient, AIServiceAPI {
     private let oauthUsageURL = "https://api.anthropic.com/api/oauth/usage"
     private let allowKeychainInteraction: Bool
+    /// When set, this client reports one specific account instead of whatever
+    /// credentials happen to be active on the machine.
+    private let account: ProviderAccount?
 
     override init(config: ServiceConfig) {
         self.allowKeychainInteraction = true
+        self.account = nil
         super.init(config: config)
     }
 
-    init(config: ServiceConfig, allowKeychainInteraction: Bool) {
+    init(config: ServiceConfig, allowKeychainInteraction: Bool, account: ProviderAccount? = nil) {
         self.allowKeychainInteraction = allowKeychainInteraction
+        self.account = account
         super.init(config: config)
     }
 
@@ -57,6 +63,9 @@ class AnthropicClient: BaseAPIClient, AIServiceAPI {
     // MARK: - AIServiceAPI
 
     func fetchUsage() async throws -> UsageData {
+        if let account {
+            return try await fetchUsage(for: account)
+        }
         if var credentials = KeychainManager.shared.getClaudeCodeCredentials(allowInteraction: allowKeychainInteraction) {
             if credentials.isExpired || credentials.willExpireSoon {
                 print("🔄 Token expired or expiring soon, attempting refresh...")
@@ -112,6 +121,53 @@ class AnthropicClient: BaseAPIClient, AIServiceAPI {
         }
 
         throw APIError.missingAPIKey
+    }
+
+    // MARK: - Per-account usage
+
+    /// Reports one specific account, **read-only**.
+    ///
+    /// Two deliberate omissions, both about not damaging credentials we don't own:
+    ///
+    /// 1. No refresh. Claude and Codex OAuth use *rotating* refresh tokens: a
+    ///    refresh consumes the old token and issues a new one. If this monitor
+    ///    refreshed an account owned by Claude Code or a launcher, that app would
+    ///    be left holding a dead refresh token and the user would be silently
+    ///    logged out of an account they actually work in. A read-only monitor must
+    ///    never take that risk — whichever app owns the login keeps it fresh, and
+    ///    we report what we can read.
+    /// 2. No pre-emptive refresh on `expiresAt` either. That timestamp isn't
+    ///    authoritative for `/api/oauth/usage`; credentials keep authenticating
+    ///    there past their nominal expiry, so acting on it would only invent work.
+    private func fetchUsage(for account: ProviderAccount) async throws -> UsageData {
+        let store = await AccountCredentialStore.shared
+        guard let raw = await store.rawCredentials(for: account, allowImport: allowKeychainInteraction),
+              let credentials = ClaudeTokenRefresher.decode(raw) else {
+            let needsImport = await store.needsImport(account)
+            throw APIError.httpError(
+                statusCode: 401,
+                message: needsImport
+                    ? "\(account.label): 키체인 접근을 한 번 허용해 주세요 (새로고침)"
+                    : "\(account.label): 자격증명을 찾을 수 없습니다"
+            )
+        }
+
+        do {
+            return try await fetchOAuthUsage(accessToken: credentials.accessToken,
+                                             tier: credentials.rateLimitTier)
+        } catch let error as APIError {
+            switch error {
+            case .unauthorized, .httpError(401, _), .httpError(403, _):
+                // Stale because the owning app hasn't used this login lately.
+                // It refreshes itself the next time that app runs.
+                throw APIError.httpError(
+                    statusCode: 401,
+                    message: "\(account.label): 토큰이 만료됨 — 해당 계정을 한 번 사용하면 자동 복구됩니다"
+                )
+            default:
+                throw error
+            }
+        }
     }
 
     // MARK: - OAuth API

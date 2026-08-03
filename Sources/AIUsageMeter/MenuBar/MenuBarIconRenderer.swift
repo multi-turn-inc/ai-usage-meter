@@ -6,7 +6,12 @@ import AIUsageMeterCore
 enum MenuBarIconRenderer {
 
     static func render(appState: AppState, themeManager: ThemeManager, animationDate: Date = Date()) -> NSImage {
-        let services = appState.services.filter { $0.config.isEnabled }
+        // One cell per provider, not per account. With several logins per
+        // provider the bar would otherwise grow without bound, so each cell
+        // shows that provider's most-constrained account — the one about to
+        // run out is what you need to see at a glance. The panel breaks the
+        // accounts out individually.
+        let services = mostConstrainedPerService(appState.services.filter { $0.config.isEnabled })
         guard !services.isEmpty else {
             // Show a placeholder icon when no services are enabled
             let img = NSImage(size: NSSize(width: 22, height: 22), flipped: false) { rect in
@@ -72,6 +77,29 @@ enum MenuBarIconRenderer {
 
         image.isTemplate = false
         return image
+    }
+
+    /// Picks, for each provider, the account with the least headroom left —
+    /// highest usage across its 5-hour and 7-day windows. Provider order stays
+    /// stable so the icon doesn't reshuffle between refreshes.
+    static func mostConstrainedPerService(_ services: [ServiceViewModel]) -> [ServiceViewModel] {
+        var byType: [ServiceType: ServiceViewModel] = [:]
+        for service in services {
+            let type = service.config.serviceType
+            guard let incumbent = byType[type] else {
+                byType[type] = service
+                continue
+            }
+            if pressure(of: service) > pressure(of: incumbent) {
+                byType[type] = service
+            }
+        }
+        return ServiceType.allCases.compactMap { byType[$0] }
+    }
+
+    private static func pressure(of service: ServiceViewModel) -> Double {
+        max(service.fiveHourUsage ?? service.usagePercentage,
+            service.sevenDayUsage ?? 0)
     }
 
     private struct ServiceSnapshot {

@@ -69,9 +69,9 @@ struct MainPanel: View {
                     .padding(.bottom, 10)
             } else {
                 VStack(spacing: 14) {
-                    HStack(spacing: enabledServices.count >= 3 ? 20 : 32) {
-                        ForEach(Array(enabledServices.enumerated()), id: \.element.id) { index, service in
-                            CircularGaugeView(service: service, compact: enabledServices.count >= 3)
+                    HStack(spacing: gaugeServices.count >= 3 ? 20 : 32) {
+                        ForEach(Array(gaugeServices.enumerated()), id: \.element.id) { index, service in
+                            CircularGaugeView(service: service, compact: gaugeServices.count >= 3)
                                 .opacity(appeared ? 1 : 0)
                                 .offset(y: appeared ? 0 : 12)
                                 .animation(
@@ -152,6 +152,13 @@ struct MainPanel: View {
 
     private var enabledServices: [ServiceViewModel] {
         appState.services.filter { $0.config.isEnabled }
+    }
+
+    /// The top row summarises: one gauge per provider, showing its most
+    /// constrained account — same rule as the menu-bar icon. Five gauges would
+    /// not fit a 300pt panel, and the cards below already list every account.
+    private var gaugeServices: [ServiceViewModel] {
+        MenuBarIconRenderer.mostConstrainedPerService(enabledServices)
     }
 
     private func formatLastUpdate(_ date: Date) -> String {
