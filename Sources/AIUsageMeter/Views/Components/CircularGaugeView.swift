@@ -24,6 +24,11 @@ struct CircularGaugeView: View {
         return AccountRegistry.shared.shortDisplayName(for: account)
     }
 
+    private var isPinned: Bool {
+        guard let account = service.account else { return false }
+        return AccountRegistry.shared.isPinned(account)
+    }
+
     private var pinHelp: String {
         guard let account = service.account else { return "" }
         return AccountRegistry.shared.isPinned(account)
@@ -128,12 +133,21 @@ struct CircularGaugeView: View {
             }
             .help(pinHelp)
 
-            Text(gaugeLabel)
-                .font(.system(size: mini ? 9 : (compact ? 12 : 13), weight: .semibold))
-                .foregroundStyle(service.isAuthError ? .secondary : .primary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-                .frame(maxWidth: outerSize + 16)
+            // The menu-bar representative is marked like a footnote rather than
+            // with a coloured dot on the ring, which read as an alert.
+            HStack(spacing: 1) {
+                Text(gaugeLabel)
+                    .foregroundStyle(service.isAuthError ? Color.secondary : Color.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                if isPinned {
+                    Text("*")
+                        .foregroundStyle(service.brandColor)
+                        .transition(.opacity)
+                }
+            }
+            .font(.system(size: mini ? 9 : (compact ? 12 : 13), weight: .semibold))
+            .frame(maxWidth: outerSize + 20)
         }
         .onAppear {
             withAnimation(.spring(response: 0.6, dampingFraction: 0.65)) {
