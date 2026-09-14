@@ -67,24 +67,18 @@ public final class ClaudeCodeTokenParser {
         guard fileManager.fileExists(atPath: baseDir.path) else { return [] }
 
         var results: [URL] = []
-        guard let projectDirs = try? fileManager.contentsOfDirectory(
-            at: baseDir, includingPropertiesForKeys: [.contentModificationDateKey], options: .skipsHiddenFiles
+        guard let enumerator = fileManager.enumerator(
+            at: baseDir,
+            includingPropertiesForKeys: [.isRegularFileKey, .contentModificationDateKey],
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]
         ) else { return [] }
 
-        for projectDir in projectDirs {
-            var isDir: ObjCBool = false
-            guard fileManager.fileExists(atPath: projectDir.path, isDirectory: &isDir), isDir.boolValue else { continue }
-
-            guard let files = try? fileManager.contentsOfDirectory(
-                at: projectDir, includingPropertiesForKeys: [.contentModificationDateKey], options: .skipsHiddenFiles
-            ) else { continue }
-
-            for file in files where file.pathExtension == "jsonl" {
-                if let modDate = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
-                   modDate >= cutoff {
-                    results.append(file)
-                }
-            }
+        for case let file as URL in enumerator where file.pathExtension == "jsonl" {
+            guard let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .contentModificationDateKey]),
+                  values.isRegularFile == true,
+                  let modDate = values.contentModificationDate,
+                  modDate >= cutoff else { continue }
+            results.append(file)
         }
 
         return results

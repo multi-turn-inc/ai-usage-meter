@@ -8,10 +8,10 @@ struct UsageHistoryEntry: Codable, Identifiable {
     let fiveHourUsage: Double?
     let sevenDayUsage: Double?
 
-    init(serviceType: ServiceType, fiveHourUsage: Double?, sevenDayUsage: Double?) {
+    init(serviceType: ServiceType, fiveHourUsage: Double?, sevenDayUsage: Double?, timestamp: Date = Date()) {
         self.id = UUID()
         self.serviceType = serviceType
-        self.timestamp = Date()
+        self.timestamp = timestamp
         self.fiveHourUsage = fiveHourUsage
         self.sevenDayUsage = sevenDayUsage
     }
@@ -20,7 +20,6 @@ struct UsageHistoryEntry: Codable, Identifiable {
 class UsageHistoryStore {
     static let shared = UsageHistoryStore()
 
-    private let maxEntries = 168 // 7 days * 24 hours
     private let fileURL: URL
 
     private init() {
@@ -31,6 +30,12 @@ class UsageHistoryStore {
         try? FileManager.default.createDirectory(at: appFolder, withIntermediateDirectories: true)
 
         fileURL = appFolder.appendingPathComponent("usage_history.json")
+    }
+
+    // Internal initializer keeps the retention logic testable without touching
+    // the user's live history file.
+    init(fileURL: URL) {
+        self.fileURL = fileURL
     }
 
     func loadHistory() -> [UsageHistoryEntry] {
@@ -45,18 +50,32 @@ class UsageHistoryStore {
         var entries = loadHistory()
         entries.append(entry)
 
-        // Keep only recent entries
-        if entries.count > maxEntries {
-            entries = Array(entries.suffix(maxEntries))
-        }
-
-        // Remove entries older than 7 days
+        // Retain by time, not by a global entry count. Refreshes save once per
+        // enabled account, so a 168-entry cap kept only a few hours when both
+        // Claude and Codex were enabled.
         let sevenDaysAgo = Date().addingTimeInterval(-7 * 24 * 60 * 60)
         entries = entries.filter { $0.timestamp > sevenDaysAgo }
+
+        // Keep the newest sample for each service/hour. This bounds the file to
+        // roughly services × 168 samples while preserving the full seven days.
+        var latestByHour: [HourlyKey: UsageHistoryEntry] = [:]
+        for candidate in entries {
+            let key = HourlyKey(serviceType: candidate.serviceType,
+                                hour: Calendar.current.dateInterval(of: .hour, for: candidate.timestamp)?.start ?? candidate.timestamp)
+            if latestByHour[key]?.timestamp ?? .distantPast < candidate.timestamp {
+                latestByHour[key] = candidate
+            }
+        }
+        entries = latestByHour.values.sorted { $0.timestamp < $1.timestamp }
 
         if let data = try? JSONEncoder().encode(entries) {
             try? data.write(to: fileURL)
         }
+    }
+
+    private struct HourlyKey: Hashable {
+        let serviceType: ServiceType
+        let hour: Date
     }
 
     func getHistory(for serviceType: ServiceType, hours: Int = 24) -> [UsageHistoryEntry] {

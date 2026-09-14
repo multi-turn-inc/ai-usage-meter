@@ -13,6 +13,8 @@ func makeClaudeProjectsDir(files: [String: String]) -> URL {
                                               withIntermediateDirectories: true)
     for (name, content) in files {
         let dest = projectDir.appendingPathComponent(name)
+        try! FileManager.default.createDirectory(at: dest.deletingLastPathComponent(),
+                                                  withIntermediateDirectories: true)
         try! content.write(to: dest, atomically: true, encoding: .utf8)
     }
     return root
@@ -51,6 +53,21 @@ final class ClaudeCodeTokenParserTests: XCTestCase {
         XCTAssertEqual(totalInput,  300, "Duplicate message must not double-count input tokens")
         XCTAssertEqual(totalOutput, 130, "Duplicate message must not double-count output tokens")
         XCTAssertEqual(totalMsgs,   2,   "Duplicate message must count as 1 unique message")
+    }
+
+    // Claude Code stores subagent/workflow transcripts below the session
+    // directory. They must be included in the same aggregate as top-level
+    // project transcripts.
+    func test_nestedTranscript_isIncluded() {
+        let content = """
+        {"type":"assistant","message":{"id":"nested_msg","model":"claude-sonnet-4-6","usage":{"input_tokens":120,"output_tokens":30}},"requestId":"nested_req","timestamp":"2026-07-01T10:00:00.000Z"}
+        """
+        let root = makeClaudeProjectsDir(files: ["session/subagents/agent-1.jsonl": content])
+        let parser = ClaudeCodeTokenParser(baseDirForTesting: root)
+        let summary = parser.parse(days: 1000)
+
+        XCTAssertEqual(summary.daily.reduce(0) { $0 + $1.totalTokens }, 150)
+        XCTAssertEqual(summary.daily.reduce(0) { $0 + $1.messageCount }, 1)
     }
 
     // MARK: Same messageId but different requestId → two separate messages

@@ -31,7 +31,11 @@ final class CodexTokenParser {
         let result = CodexSessionParser.shared.parse(since: cutoff)
 
         for event in result.events {
-            let total = event.totalTokens > 0 ? event.totalTokens : event.inputTokens + event.outputTokens
+            // Keep the chart's definition consistent with Claude and with
+            // DailyTokenUsage.totalTokens: input + output only. Codex's
+            // total_token_usage may also include cached input/reasoning, which
+            // otherwise makes byService disagree with the number shown in the UI.
+            let total = event.inputTokens + event.outputTokens
             let cost = ModelPricing.shared.codexCost(
                 model: event.model,
                 input: event.inputTokens,

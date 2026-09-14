@@ -146,12 +146,17 @@ final class MenuBarPanelController: NSObject, NSWindowDelegate {
     private func syncConsumingAnimationTimer() {
         let anyConsuming = appState.services.contains { $0.isConsuming }
         if anyConsuming && consumingAnimationTimer == nil {
-            let timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 12, repeats: true) { [weak self] _ in
+            // The icon is a custom NSImage whose text and paths are rasterized on
+            // every update. Twelve renders per second kept the main thread busy for
+            // every active CLI (and was especially noticeable while using Aside).
+            // Four frames per second still reads as a heartbeat without turning the
+            // status item into a continuous CoreText/CoreGraphics workload.
+            let timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
                 Task { @MainActor in
                     self?.updateStatusItemImage()
                 }
             }
-            timer.tolerance = 0.03
+            timer.tolerance = 0.08
             consumingAnimationTimer = timer
         } else if !anyConsuming && consumingAnimationTimer != nil {
             consumingAnimationTimer?.invalidate()
