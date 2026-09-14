@@ -1,0 +1,16 @@
+import Foundation
+
+let root = FileManager.default.temporaryDirectory.appendingPathComponent("codex-regression-\(UUID().uuidString)"), now = Date(), day = Calendar.current.date(byAdding: .day, value: -2, to: now)!
+defer { try? FileManager.default.removeItem(at: root) }
+let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd"; let date = df.string(from: day); df.dateFormat = "yyyy/MM/dd"; let dir = df.string(from: day)
+func put(_ path: String, _ text: String, _ folder: String = "sessions") { let u = root.appendingPathComponent(folder).appendingPathComponent(path); try! FileManager.default.createDirectory(at: u.deletingLastPathComponent(), withIntermediateDirectories: true); try! text.write(to: u, atomically: true, encoding: .utf8) }
+func e(_ t: String, _ i: Int, _ o: Int, _ total: Int) -> String { "{\"timestamp\":\"\(date)T\(t)Z\",\"type\":\"event\",\"payload\":{\"type\":\"token_count\",\"info\":{\"last_token_usage\":{\"input_tokens\":\(i),\"cached_input_tokens\":0,\"output_tokens\":\(o),\"reasoning_output_tokens\":0,\"total_tokens\":\(total)}}}}\n" }
+put("\(dir)/normal.jsonl", e("09:00:00", 10, 4, 14)); put("flat.jsonl", e("09:00:01", 17, 5, 22), "archived_sessions"); put("2000/01/01/old.jsonl", e("09:00:02", 19, 6, 25)); put("\(dir)/append.jsonl", e("09:00:03", 23, 7, 30))
+put("\(dir)/repeat.jsonl", "{\"timestamp\":\"\(date)T09:00:05Z\",\"type\":\"event\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":400,\"cached_input_tokens\":0,\"output_tokens\":150,\"reasoning_output_tokens\":0,\"total_tokens\":550},\"last_token_usage\":{\"input_tokens\":400,\"cached_input_tokens\":0,\"output_tokens\":150,\"reasoning_output_tokens\":0,\"total_tokens\":550}}}}\n{\"timestamp\":\"\(date)T09:00:06Z\",\"type\":\"event\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":400,\"cached_input_tokens\":0,\"output_tokens\":150,\"reasoning_output_tokens\":0,\"total_tokens\":550},\"last_token_usage\":{\"input_tokens\":400,\"cached_input_tokens\":0,\"output_tokens\":150,\"reasoning_output_tokens\":0,\"total_tokens\":550}}}}\n")
+let since = now.addingTimeInterval(-30 * 86400), parser = CodexSessionParser(codexHomeForTesting: root.path)
+func ok(_ b: Bool, _ s: String) { if !b { fatalError("FAIL \(s)") } }
+ok(parser.parse(since: since).events.contains { $0.totalTokens == 22 }, "flat archive"); ok(parser.parse(since: since).events.contains { $0.totalTokens == 25 }, "old directory")
+ok(parser.parse(since: since).events.filter { $0.totalTokens == 550 }.count == 1, "repeated cumulative snapshot")
+let f = root.appendingPathComponent("sessions/\(dir)/append.jsonl"), h = try! FileHandle(forWritingTo: f); h.seekToEndOfFile(); h.write(Data(e("09:00:04", 29, 8, 37).utf8)); try! h.close(); ok(parser.parse(since: since).events.contains { $0.totalTokens == 37 }, "append")
+let cold = CodexSessionParser(codexHomeForTesting: root.path), g = DispatchGroup(), q = DispatchQueue(label: "cold", attributes: .concurrent); var counts = [Int](); let l = NSLock(); for _ in 0..<2 { g.enter(); q.async { let n = cold.parse(since: since).events.count; l.lock(); counts.append(n); l.unlock(); g.leave() } }; g.wait(); ok(counts.count == 2 && counts.allSatisfy { $0 > 0 }, "concurrent")
+print("PASS codex concurrent=\(counts)")

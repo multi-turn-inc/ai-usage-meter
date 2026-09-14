@@ -27,6 +27,8 @@ class AppState {
     private var didStartRefreshWorkflow: Bool = false
     private var processMonitorTimer: Timer?
     private var rateLimitRetryScheduled = false
+    private var tokenUsageTask: Task<Void, Never>?
+    private var tokenUsageRefreshPending = false
     private let dataStore = DataStore.shared
 
     // Credential file watchers for instant account-switch detection
@@ -515,29 +517,42 @@ class AppState {
         lastRefreshDate = Date()
         errorMessage = errors.isEmpty ? nil : errors.joined(separator: "; ")
 
-        // Parse token logs from Claude Code + Codex on a background priority so
-        // file I/O never blocks the main thread; the final assignment hops back
-        // to MainActor. `weak self` isn't needed inside a detached task with an
-        // explicit MainActor hop — but capturing self by value keeps the
-        // Sendable checker happy without racing.
-        Task.detached(priority: .utility) { [weak self] in
-            let claude = ClaudeCodeTokenParser.shared.parse(days: 7)
-            // Start with Claude data, then merge Codex into it
-            var dailyBuckets = Dictionary(uniqueKeysWithValues: claude.daily.map { ($0.date, $0) })
-            var hourlyBuckets = Dictionary(uniqueKeysWithValues: claude.hourly.map { ($0.hourKey, $0) })
-            CodexTokenParser.shared.merge(into: &dailyBuckets, hourly: &hourlyBuckets, days: 7)
-
-            let summary = TokenUsageSummary(
-                daily: dailyBuckets.values.sorted { $0.date < $1.date },
-                hourly: hourlyBuckets.values.sorted { $0.hourKey < $1.hourKey },
-                lastParsed: Date()
-            )
-            await MainActor.run { [weak self] in
-                self?.tokenUsage = summary
-            }
-        }
+        requestTokenUsageRefresh()
 
         print("🏁 Refresh complete. Errors: \(errorMessage ?? "none")")
+    }
+
+    private func requestTokenUsageRefresh() {
+        if tokenUsageTask != nil {
+            tokenUsageRefreshPending = true
+            return
+        }
+        tokenUsageTask = Task { [weak self] in
+            let summary = await Task.detached(priority: .utility) {
+                Self.parseTokenUsageLogs()
+            }.value
+            guard let self else { return }
+            self.tokenUsage = summary
+            self.tokenUsageTask = nil
+            if self.tokenUsageRefreshPending {
+                self.tokenUsageRefreshPending = false
+                self.requestTokenUsageRefresh()
+            }
+        }
+    }
+
+    nonisolated private static func parseTokenUsageLogs() -> TokenUsageSummary {
+        let claude = ClaudeCodeTokenParser.shared.parse(days: 7)
+        var daily = Dictionary(uniqueKeysWithValues: claude.daily.map { ($0.date, $0) })
+        var hourly = Dictionary(uniqueKeysWithValues: claude.hourly.map { ($0.hourKey, $0) })
+        var events = claude.events
+        CodexTokenParser.shared.merge(into: &daily, hourly: &hourly, events: &events, days: 7)
+        return TokenUsageSummary(
+            daily: daily.values.sorted { $0.date < $1.date },
+            hourly: hourly.values.sorted { $0.hourKey < $1.hourKey },
+            events: events.sorted { $0.timestamp < $1.timestamp },
+            lastParsed: Date()
+        )
     }
 
     /// After a 429 on first load, retry well before the normal 5-min cycle so the

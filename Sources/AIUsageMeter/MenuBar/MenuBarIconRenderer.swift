@@ -5,7 +5,11 @@ import AIUsageMeterCore
 @MainActor
 enum MenuBarIconRenderer {
 
-    static func render(appState: AppState, themeManager: ThemeManager, animationDate: Date = Date()) -> NSImage {
+    /// The load cell is only 22 px high; sub-percent changes cannot alter a
+    /// rendered pixel and should not invalidate the cached icon.
+    static func displayedLoad(_ value: Double) -> Double { value.rounded() }
+
+    static func render(appState: AppState, themeManager: ThemeManager) -> NSImage {
         // One cell per provider, not per account. With several logins per
         // provider the bar would otherwise grow without bound, so each cell
         // shows that provider's most-constrained account — the one about to
@@ -32,26 +36,21 @@ enum MenuBarIconRenderer {
         let height: CGFloat = 22
 
         let snapshot = services.map { service -> ServiceSnapshot in
-            let remaining = max(
-                max(0, 100.0 - (service.fiveHourUsage ?? service.usagePercentage)) / 100.0,
-                max(0, 100.0 - (service.sevenDayUsage ?? service.usagePercentage)) / 100.0
-            )
             return ServiceSnapshot(
                 brandColor: service.config.serviceType.brandColor.nsColor,
                 serviceType: service.config.serviceType,
                 fiveHourUsage: service.fiveHourUsage,
                 sevenDayUsage: service.sevenDayUsage,
                 usagePercentage: service.usagePercentage,
-                isConsuming: service.isConsuming,
-                maxRemaining: remaining
+                isConsuming: service.isConsuming
             )
         }
 
-        let elapsed = animationDate.timeIntervalSinceReferenceDate
-
         // Snapshot load values up front (render closure runs on the same actor).
         let load = SystemLoadMonitor.shared
-        let loadSnapshot: (cpu: Double, gpu: Double, ram: Double)? = showLoad ? (load.cpu, load.gpu, load.ram) : nil
+        let loadSnapshot: (cpu: Double, gpu: Double, ram: Double)? = showLoad ? (
+            displayedLoad(load.cpu), displayedLoad(load.gpu), displayedLoad(load.ram)
+        ) : nil
 
         let image = NSImage(size: NSSize(width: totalWidth, height: height), flipped: false) { _ in
             // `NSAppearance.current` is deprecated (macOS 12+); use the
@@ -65,7 +64,7 @@ enum MenuBarIconRenderer {
 
             var x: CGFloat = 0
             for service in snapshot {
-                drawMeter(at: x, service: service, dark: dark, width: serviceWidth, height: height, elapsed: elapsed)
+                drawMeter(at: x, service: service, dark: dark, width: serviceWidth, height: height)
                 x += serviceWidth + spacing
             }
             if let loadSnapshot {
@@ -119,19 +118,6 @@ enum MenuBarIconRenderer {
         let sevenDayUsage: Double?
         let usagePercentage: Double
         let isConsuming: Bool
-        let maxRemaining: Double
-    }
-
-    private static func heartbeatCurve(_ phase: Double) -> Double {
-        if phase < 0.12 {
-            return sin((phase / 0.12) * .pi)
-        } else if phase < 0.20 {
-            return 0.04
-        } else if phase < 0.32 {
-            return sin(((phase - 0.20) / 0.12) * .pi) * 0.55
-        } else {
-            return 0.03
-        }
     }
 
     private static func drawMeter(
@@ -139,8 +125,7 @@ enum MenuBarIconRenderer {
         service: ServiceSnapshot,
         dark: Bool,
         width: CGFloat,
-        height: CGFloat,
-        elapsed: TimeInterval
+        height: CGFloat
     ) {
         let color = service.brandColor
         let labelColor = dark ? NSColor.white : NSColor.black
@@ -150,24 +135,12 @@ enum MenuBarIconRenderer {
         let fiveHourRemaining = max(0, 100.0 - (service.fiveHourUsage ?? service.usagePercentage)) / 100.0
         let sevenDayRemaining = max(0, 100.0 - (service.sevenDayUsage ?? service.usagePercentage)) / 100.0
 
-        let timeOffset: TimeInterval = {
-            switch service.serviceType {
-            case .claude: return 0
-            case .codex: return 0.37
-            case .gemini: return 0.74
-            }
-        }()
-
-        let beat: CGFloat = {
-            guard service.isConsuming else { return 0 }
-            let cycleDuration = 0.8 + (service.maxRemaining * 1.6)
-            let phase = (elapsed + timeOffset).truncatingRemainder(dividingBy: cycleDuration) / cycleDuration
-            return CGFloat(heartbeatCurve(phase))
-        }()
-
-        let borderPulse: CGFloat = service.isConsuming ? (0.18 + beat * 0.30) : 0
+        // Consuming is a state indicator. Keep it static so the menu-bar icon is only
+        // rendered when an input changes; a timer-driven heartbeat made the app redraw
+        // the entire icon 12 times per second while an agent was active.
+        let borderPulse: CGFloat = service.isConsuming ? 0.22 : 0
         let activeBorderColor = borderColor.blended(withFraction: borderPulse, of: color) ?? borderColor
-        let fillAlpha: CGFloat = service.isConsuming ? (0.86 + beat * 0.14) : 1.0
+        let fillAlpha: CGFloat = service.isConsuming ? 0.86 : 1.0
 
         let label: String
         switch service.serviceType {
@@ -203,15 +176,6 @@ enum MenuBarIconRenderer {
         framePath.lineWidth = 0.75
         framePath.stroke()
 
-        let filledBars = max(0, min(barCount, Int((CGFloat(fiveHourRemaining) + 0.05) * CGFloat(barCount))))
-        let activityBarIndex: Int? = {
-            guard service.isConsuming, filledBars > 0 else { return nil }
-            let sweepDuration = 1.6 + service.maxRemaining * 1.2
-            let t = (elapsed + timeOffset).truncatingRemainder(dividingBy: sweepDuration) / sweepDuration
-            let idx = Int(Double(filledBars) * t)
-            return max(0, min(filledBars - 1, idx))
-        }()
-
         for i in 0..<barCount {
             let barX = x + 2 + CGFloat(i) * (barWidth + 1)
             let fillRect = NSRect(x: barX, y: barY, width: barWidth, height: barHeight)
@@ -220,10 +184,7 @@ enum MenuBarIconRenderer {
             let shouldFill = barPosition <= CGFloat(fiveHourRemaining) + 0.05
 
             if shouldFill {
-                var fillColor = color.withAlphaComponent(fillAlpha)
-                if let activityBarIndex, i == activityBarIndex {
-                    fillColor = color.blended(withFraction: 0.26 + beat * 0.30, of: .white) ?? fillColor
-                }
+                let fillColor = color.withAlphaComponent(fillAlpha)
                 fillColor.setFill()
             } else {
                 emptyBarColor.setFill()

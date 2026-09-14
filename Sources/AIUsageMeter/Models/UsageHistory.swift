@@ -8,10 +8,10 @@ struct UsageHistoryEntry: Codable, Identifiable {
     let fiveHourUsage: Double?
     let sevenDayUsage: Double?
 
-    init(serviceType: ServiceType, fiveHourUsage: Double?, sevenDayUsage: Double?) {
+    init(serviceType: ServiceType, fiveHourUsage: Double?, sevenDayUsage: Double?, timestamp: Date = Date()) {
         self.id = UUID()
         self.serviceType = serviceType
-        self.timestamp = Date()
+        self.timestamp = timestamp
         self.fiveHourUsage = fiveHourUsage
         self.sevenDayUsage = sevenDayUsage
     }
@@ -20,7 +20,8 @@ struct UsageHistoryEntry: Codable, Identifiable {
 class UsageHistoryStore {
     static let shared = UsageHistoryStore()
 
-    private let maxEntries = 168 // 7 days * 24 hours
+    // Keep at most one sample per service and minute, independent of refresh rate.
+    private static let retentionInterval: TimeInterval = 7 * 24 * 60 * 60
     private let fileURL: URL
 
     private init() {
@@ -44,19 +45,24 @@ class UsageHistoryStore {
     func saveEntry(_ entry: UsageHistoryEntry) {
         var entries = loadHistory()
         entries.append(entry)
-
-        // Keep only recent entries
-        if entries.count > maxEntries {
-            entries = Array(entries.suffix(maxEntries))
-        }
-
-        // Remove entries older than 7 days
-        let sevenDaysAgo = Date().addingTimeInterval(-7 * 24 * 60 * 60)
-        entries = entries.filter { $0.timestamp > sevenDaysAgo }
+        entries = Self.trim(entries, now: Date())
 
         if let data = try? JSONEncoder().encode(entries) {
             try? data.write(to: fileURL)
         }
+    }
+
+    static func trim(_ entries: [UsageHistoryEntry], now: Date) -> [UsageHistoryEntry] {
+        let cutoff = now.addingTimeInterval(-retentionInterval)
+        var latestByMinute: [String: UsageHistoryEntry] = [:]
+        for entry in entries where entry.timestamp > cutoff && entry.timestamp <= now {
+            let minute = Int(entry.timestamp.timeIntervalSince1970 / 60)
+            let key = "\(entry.serviceType.rawValue):\(minute)"
+            if latestByMinute[key].map({ $0.timestamp < entry.timestamp }) ?? true {
+                latestByMinute[key] = entry
+            }
+        }
+        return latestByMinute.values.sorted { $0.timestamp < $1.timestamp }
     }
 
     func getHistory(for serviceType: ServiceType, hours: Int = 24) -> [UsageHistoryEntry] {

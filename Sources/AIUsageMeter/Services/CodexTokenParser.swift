@@ -23,11 +23,18 @@ final class CodexTokenParser {
 
     private init() {}
 
+    func merge(into daily: inout [String: DailyTokenUsage],
+               hourly: inout [String: HourlyTokenUsage], days: Int = 7) {
+        var events: [TokenUsageEvent] = []
+        merge(into: &daily, hourly: &hourly, events: &events, days: days)
+    }
+
     /// Merges Codex token data into existing daily/hourly buckets.
     func merge(into daily: inout [String: DailyTokenUsage],
                hourly: inout [String: HourlyTokenUsage],
+               events: inout [TokenUsageEvent],
                days: Int = 7) {
-        let cutoff = Calendar.current.date(byAdding: .day, value: -days, to: Date()) ?? Date()
+        let cutoff = Date().addingTimeInterval(-Double(days) * 86_400)
         let result = CodexSessionParser.shared.parse(since: cutoff)
 
         for event in result.events {
@@ -39,6 +46,11 @@ final class CodexTokenParser {
                 output: event.outputTokens
             )
             guard total > 0 || cost > 0 else { continue }
+            events.append(TokenUsageEvent(
+                id: "codex-\(event.timestamp.timeIntervalSince1970)-\(events.count)",
+                timestamp: event.timestamp, service: .codex,
+                inputTokens: event.inputTokens, outputTokens: event.outputTokens, costUSD: cost
+            ))
 
             // Daily
             let dayKey = dayFormatter.string(from: event.timestamp)

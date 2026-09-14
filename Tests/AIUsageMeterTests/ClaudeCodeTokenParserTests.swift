@@ -53,13 +53,13 @@ final class ClaudeCodeTokenParserTests: XCTestCase {
         XCTAssertEqual(totalMsgs,   2,   "Duplicate message must count as 1 unique message")
     }
 
-    // MARK: Same messageId but different requestId → two separate messages
+    // MARK: Same messageId with different requestId → one resolved message
     //
     // Retried requests carry the same messageId but a new requestId.
-    // Both must be counted independently.
+    // requestId is transport metadata; the stable message id identifies the message.
     //
-    // Expected: 2 messages, total input = 300, total output = 130
-    func test_sameMessageIdDifferentRequestId_countedSeparately() {
+    // Expected: 1 final message, input = 200, output = 80
+    func test_sameMessageIdDifferentRequestId_resolvedToOneFinalRecord() {
         let content = """
         {"type":"assistant","message":{"id":"msg_003","model":"claude-sonnet-4-6","usage":{"input_tokens":100,"output_tokens":50}},"requestId":"req_A","timestamp":"2026-07-01T11:00:00.000Z"}
         {"type":"assistant","message":{"id":"msg_003","model":"claude-sonnet-4-6","usage":{"input_tokens":200,"output_tokens":80}},"requestId":"req_B","timestamp":"2026-07-01T11:01:00.000Z"}
@@ -72,9 +72,9 @@ final class ClaudeCodeTokenParserTests: XCTestCase {
         let totalOutput = summary.daily.reduce(0) { $0 + $1.outputTokens }
         let totalMsgs   = summary.daily.reduce(0) { $0 + $1.messageCount }
 
-        XCTAssertEqual(totalInput,  300)
-        XCTAssertEqual(totalOutput, 130)
-        XCTAssertEqual(totalMsgs,   2)
+        XCTAssertEqual(totalInput,  200)
+        XCTAssertEqual(totalOutput, 80)
+        XCTAssertEqual(totalMsgs,   1)
     }
 
     // MARK: Fixture (g): cache tokens — cost calculation includes cache traffic
@@ -92,8 +92,7 @@ final class ClaudeCodeTokenParserTests: XCTestCase {
     //
     // total cost ≈ 0.013125 + 0.00805 + 0.004 = 0.025175
     //
-    // Note: Token counts for "total" in the summary are input+output only (no cache),
-    // matching Claude Code /stats behaviour.
+    // Displayed input includes each cache lane once, matching the UI accounting model.
     func test_cacheTokens_costIncludesCacheTraffic() {
         let content = """
         {"type":"assistant","message":{"id":"msg_010","model":"claude-opus-4-5","usage":{"input_tokens":1000,"output_tokens":200,"cache_creation_input_tokens":500,"cache_read_input_tokens":0}},"requestId":"req_010","timestamp":"2026-07-01T14:00:00.000Z"}
@@ -108,8 +107,8 @@ final class ClaudeCodeTokenParserTests: XCTestCase {
         let totalOutput = summary.daily.reduce(0) { $0 + $1.outputTokens }
         let totalCost   = summary.daily.reduce(0.0) { $0 + $1.costUSD }
 
-        // Token counts: input+output only (cache tokens excluded from count)
-        XCTAssertEqual(totalInput,  1000 + 800 + 300)  // = 2100
+        // Displayed input includes each cache lane once.
+        XCTAssertEqual(totalInput,  1500 + 1400 + 300)  // cache lanes included once
         XCTAssertEqual(totalOutput, 200 + 150 + 100)   // = 450
 
         // Cost must be > zero and close to the hand-computed 0.025175

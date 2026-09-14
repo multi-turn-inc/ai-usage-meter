@@ -1,5 +1,7 @@
 import AppKit
 import Observation
+import SwiftUI
+import AIUsageMeterCore
 
 @MainActor
 final class MenuBarPanelController: NSObject, NSWindowDelegate {
@@ -11,9 +13,9 @@ final class MenuBarPanelController: NSObject, NSWindowDelegate {
     private var localEventMonitor: EventMonitor?
     private var globalEventMonitor: EventMonitor?
     private var appearanceObservation: NSKeyValueObservation?
-    private var consumingAnimationTimer: Timer?
+    private var defaultsObserver: NSObjectProtocol?
     private var loadTimer: Timer?
-    private var lastIconSnapshot: IconSnapshot?
+    private let renderGate = MenuBarRenderGate()
 
     init(title: String, appState: AppState, themeManager: ThemeManager) {
         self.appState = appState
@@ -36,7 +38,7 @@ final class MenuBarPanelController: NSObject, NSWindowDelegate {
         // Set empty image first (not nil), then update with real icon
         statusItem.button?.image = NSImage()
         statusItem.button?.setAccessibilityTitle(title)
-        updateStatusItemImage()
+        updateStatusItemImageIfNeeded(force: true)
 
         localEventMonitor = LocalEventMonitor(mask: [.leftMouseDown]) { [weak self] event in
             guard let self else { return event }
@@ -67,15 +69,21 @@ final class MenuBarPanelController: NSObject, NSWindowDelegate {
 
         appearanceObservation = NSApp.observe(\.effectiveAppearance) { [weak self] _, _ in
             Task { @MainActor in
-                self?.updateStatusItemImage()
+                self?.updateStatusItemImageIfNeeded(force: true)
             }
+        }
+        defaultsObserver = NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification,
+            object: AppDefaults.userDefaults,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.updateStatusItemImageIfNeeded() }
         }
 
         window.delegate = self
         localEventMonitor?.start()
 
         startIconObservationLoop()
-        syncConsumingAnimationTimer()
         startLoadMeterTimer()
 
         autoOpenMenuBarLegendPanelIfNeeded()
@@ -83,6 +91,7 @@ final class MenuBarPanelController: NSObject, NSWindowDelegate {
 
     deinit {
         loadTimer?.invalidate()
+        if let defaultsObserver { NotificationCenter.default.removeObserver(defaultsObserver) }
         NSStatusBar.system.removeStatusItem(statusItem)
     }
 
@@ -95,7 +104,7 @@ final class MenuBarPanelController: NSObject, NSWindowDelegate {
             Task { @MainActor in
                 guard AppDefaults.userDefaults.object(forKey: "loadTabEnabled") as? Bool ?? true else { return }
                 SystemLoadMonitor.shared.sample()
-                self?.updateStatusItemImage()
+                self?.updateStatusItemImageIfNeeded()
             }
         }
         timer.tolerance = 0.3
@@ -127,41 +136,14 @@ final class MenuBarPanelController: NSObject, NSWindowDelegate {
     /// Called once per observation change batch. Diffs against the last
     /// snapshot to avoid redundant icon renders.
     private func onObservedStateChanged() {
-        let newSnapshot = IconSnapshot(appState: appState)
-        let changed = newSnapshot != lastIconSnapshot
-        let consumingChanged = newSnapshot.anyConsuming != (lastIconSnapshot?.anyConsuming ?? false)
-
-        lastIconSnapshot = newSnapshot
-
-        if changed {
-            updateStatusItemImage()
-        }
-        if consumingChanged {
-            syncConsumingAnimationTimer()
-        }
+        updateStatusItemImageIfNeeded()
 
         startIconObservationLoop()
     }
 
-    private func syncConsumingAnimationTimer() {
-        let anyConsuming = appState.services.contains { $0.isConsuming }
-        if anyConsuming && consumingAnimationTimer == nil {
-            let timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 12, repeats: true) { [weak self] _ in
-                Task { @MainActor in
-                    self?.updateStatusItemImage()
-                }
-            }
-            timer.tolerance = 0.03
-            consumingAnimationTimer = timer
-        } else if !anyConsuming && consumingAnimationTimer != nil {
-            consumingAnimationTimer?.invalidate()
-            consumingAnimationTimer = nil
-            updateStatusItemImage()
-        }
-    }
-
-    private func updateStatusItemImage() {
-        let image = MenuBarIconRenderer.render(appState: appState, themeManager: themeManager, animationDate: Date())
+    private func updateStatusItemImageIfNeeded(force: Bool = false) {
+        guard renderGate.shouldRender(appState: appState, themeManager: themeManager, force: force) else { return }
+        let image = MenuBarIconRenderer.render(appState: appState, themeManager: themeManager)
         statusItem.button?.image = image
         statusItem.button?.title = ""
         statusItem.button?.imagePosition = .imageOnly
@@ -319,39 +301,6 @@ final class MenuBarPanelController: NSObject, NSWindowDelegate {
 
         try data.write(to: url, options: .atomic)
         print("📸 Snapshot written: \(url.path)")
-    }
-}
-
-/// Lightweight value snapshot of state that affects the menu bar icon.
-/// Used to skip redundant renders when observation fires but nothing changed.
-private struct IconSnapshot: Equatable {
-    struct Service: Equatable {
-        let isEnabled: Bool
-        let usagePercentage: Double
-        let fiveHourUsage: Double?
-        let sevenDayUsage: Double?
-        let isConsuming: Bool
-    }
-
-    let services: [Service]
-    let anyConsuming: Bool
-    /// Included so a change that doesn't move any number — picking a different
-    /// representative account — still counts as a change worth redrawing.
-    let redrawToken: Int
-
-    @MainActor
-    init(appState: AppState) {
-        self.redrawToken = appState.menuBarNeedsRedraw
-        self.services = appState.services.map {
-            Service(
-                isEnabled: $0.config.isEnabled,
-                usagePercentage: $0.usagePercentage,
-                fiveHourUsage: $0.fiveHourUsage,
-                sevenDayUsage: $0.sevenDayUsage,
-                isConsuming: $0.isConsuming
-            )
-        }
-        self.anyConsuming = services.contains { $0.isConsuming }
     }
 }
 

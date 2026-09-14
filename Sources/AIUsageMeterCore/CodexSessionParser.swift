@@ -58,7 +58,6 @@ public final class CodexSessionParser: @unchecked Sendable {
     private let codexHome: String
     private let lock = NSLock()
     private var cache: (result: Result, at: Date)?
-    private var parsing = false
     /// Per-file parsed results, keyed by path, reused while size+mtime are unchanged so
     /// only files Codex actually appended to get re-read (static older files are skipped).
     /// Only touched inside the serialized doParse, so no extra locking needed.
@@ -110,26 +109,16 @@ public final class CodexSessionParser: @unchecked Sendable {
 
     private func cachedFullParse() -> Result {
         lock.lock()
-        if let cache, Date().timeIntervalSince(cache.at) < cacheTTL {
-            defer { lock.unlock() }
+        if let cache, Date().timeIntervalSince(cache.at) < cacheTTL,
+           !hasChangedFiles(since: Date().addingTimeInterval(-Double(windowDays) * 86400)) {
+            lock.unlock()
             return cache.result
         }
-        // A parse is already running (they can take seconds on multi-GB histories) —
-        // serve the last good result rather than starting a second concurrent scan.
-        if parsing {
-            let stale = cache?.result ?? Result()
-            lock.unlock()
-            return stale
-        }
-        parsing = true
-        lock.unlock()
 
         let windowStart = Date().addingTimeInterval(-Double(windowDays) * 86400)
         let result = doParse(since: windowStart)
 
-        lock.lock()
         cache = (result, Date())
-        parsing = false
         lock.unlock()
         return result
     }
@@ -161,12 +150,11 @@ public final class CodexSessionParser: @unchecked Sendable {
 
             if let rl = entry.rateLimits { result.rateLimits = rl }  // newest file wins (mtime order)
             for event in entry.events {
-                // Global dedup: archived copies and forked sessions replicate the exact
-                // same (timestamp, usage) lines across files.
+                // Preserve deduplication for archived/forked copies. Identity-aware
+                // session metadata is not available on all rollout lines yet, so retain
+                // the established value key until that schema is modeled explicitly.
                 let key = "\(event.timestamp.timeIntervalSince1970)|\(event.model ?? "")|\(event.inputTokens)|\(event.cachedInputTokens)|\(event.outputTokens)|\(event.reasoningOutputTokens)|\(event.totalTokens)"
-                if seenEventKeys.insert(key).inserted {
-                    result.events.append(event)
-                }
+                if seenEventKeys.insert(key).inserted { result.events.append(event) }
             }
         }
 
@@ -182,52 +170,39 @@ public final class CodexSessionParser: @unchecked Sendable {
     /// rate_limits win.
     private func sessionFiles(since: Date) -> [URL] {
         let fm = FileManager.default
-        let calendar = Calendar.current
-        // Directory names use local dates; pad the cutoff to dodge timezone edges.
-        let dayCutoff = calendar.startOfDay(for: since).addingTimeInterval(-48 * 3600)
-
         var collected: [(url: URL, modDate: Date)] = []
         var seenNames = Set<String>()
 
         for root in ["sessions", "archived_sessions"] {
             let rootURL = URL(fileURLWithPath: codexHome).appendingPathComponent(root)
             guard fm.fileExists(atPath: rootURL.path) else { continue }
-
-            for yearURL in numericSubdirs(of: rootURL) {
-                guard let year = Int(yearURL.lastPathComponent) else { continue }
-                for monthURL in numericSubdirs(of: yearURL) {
-                    guard let month = Int(monthURL.lastPathComponent) else { continue }
-                    for dayURL in numericSubdirs(of: monthURL) {
-                        guard let day = Int(dayURL.lastPathComponent),
-                              let dayDate = calendar.date(from: DateComponents(year: year, month: month, day: day)),
-                              dayDate >= dayCutoff else { continue }
-
-                        let files = (try? fm.contentsOfDirectory(
-                            at: dayURL,
-                            includingPropertiesForKeys: [.contentModificationDateKey],
-                            options: .skipsHiddenFiles
-                        )) ?? []
-
-                        for file in files where file.pathExtension == "jsonl" {
-                            guard !seenNames.contains(file.lastPathComponent) else { continue }
-                            guard let modDate = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
-                                  modDate >= since else { continue }
-                            seenNames.insert(file.lastPathComponent)
-                            collected.append((file, modDate))
-                        }
-                    }
-                }
+            // Archived histories may be flat, and old date directories can receive new
+            // events after a long-lived session resumes. Enumerate metadata recursively
+            // and use file mtime as the cutoff; file contents remain lazily streamed.
+            let files = fm.enumerator(at: rootURL, includingPropertiesForKeys: [.contentModificationDateKey], options: [.skipsHiddenFiles])
+            while let file = files?.nextObject() as? URL {
+                guard file.pathExtension == "jsonl",
+                      let modDate = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
+                      modDate >= since else { continue }
+                if root == "archived_sessions", seenNames.contains(file.lastPathComponent) { continue }
+                seenNames.insert(file.lastPathComponent)
+                collected.append((file, modDate))
             }
         }
 
         return collected.sorted { $0.modDate < $1.modDate }.map(\.url)
     }
 
-    private func numericSubdirs(of url: URL) -> [URL] {
-        let dirs = (try? FileManager.default.contentsOfDirectory(
-            at: url, includingPropertiesForKeys: nil, options: .skipsHiddenFiles
-        )) ?? []
-        return dirs.filter { Int($0.lastPathComponent) != nil }
+    private func hasChangedFiles(since: Date) -> Bool {
+        let files = sessionFiles(since: since)
+        if files.count != fileCache.count { return true }
+        for file in files {
+            let attrs = try? file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+            let size = attrs?.fileSize ?? -1
+            let mtime = attrs?.contentModificationDate?.timeIntervalSince1970 ?? -1
+            guard let cached = fileCache[file.path], cached.size == size, cached.mtime == mtime else { return true }
+        }
+        return false
     }
 
     /// Streams one rollout file, returning its in-window usage deltas and the most recent
@@ -276,6 +251,19 @@ public final class CodexSessionParser: @unchecked Sendable {
 
             let info = payload["info"] as? [String: Any]
             let total = self.usageTuple(info?["total_token_usage"] as? [String: Any])
+            let lastUsage = self.usageTuple(info?["last_token_usage"] as? [String: Any])
+
+            // Codex can append an unchanged cumulative snapshot again at a later
+            // timestamp while only refreshing rate limits. It must not become a second
+            // usage event; rate limits above are still retained.
+            if let total, let previous = previousTotals, let lastUsage,
+               total.input == previous.input, total.cached == previous.cached,
+               total.output == previous.output, total.reasoning == previous.reasoning,
+               total.total == previous.total,
+               lastUsage.input != 0 || lastUsage.cached != 0 || lastUsage.output != 0 || lastUsage.reasoning != 0 {
+                previousTotals = total
+                return
+            }
 
             // Replayed parent history in a thread_spawn subagent file: skip the
             // events, but keep the running total so later deltas stay correct.
@@ -288,7 +276,7 @@ public final class CodexSessionParser: @unchecked Sendable {
             }
 
             let delta: (input: Int64, cached: Int64, output: Int64, reasoning: Int64, total: Int64)?
-            if let last = self.usageTuple(info?["last_token_usage"] as? [String: Any]) {
+            if let last = lastUsage {
                 delta = last
             } else if let total {
                 let prev = previousTotals

@@ -17,6 +17,13 @@ func makeCodexHome(files: [String: String]) -> URL {
     return tmp
 }
 
+func writeArchivedFile(home: URL, relative: String, content: String) {
+    let dest = home.appendingPathComponent("archived_sessions").appendingPathComponent(relative)
+    try! FileManager.default.createDirectory(at: dest.deletingLastPathComponent(),
+                                              withIntermediateDirectories: true)
+    try! content.write(to: dest, atomically: true, encoding: .utf8)
+}
+
 /// ISO-8601 timestamp string → Date.
 func ts(_ s: String) -> Date {
     let f = ISO8601DateFormatter()
@@ -53,6 +60,46 @@ let farPast = Date().addingTimeInterval(-30 * 86400)
 // MARK: - CodexSessionParserTests
 
 final class CodexSessionParserTests: XCTestCase {
+
+    func test_archivedSessions_flatFile_isIncluded() {
+        let home = makeCodexHome(files: [:])
+        let content = """
+        {"timestamp":"\(fixtureDay)T09:00:00.000Z","type":"event","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":17,"cached_input_tokens":0,"output_tokens":5,"reasoning_output_tokens":0,"total_tokens":22}}}}
+        """
+        writeArchivedFile(home: home, relative: "flat.jsonl", content: content)
+        let result = CodexSessionParser(codexHomeForTesting: home.path).parse(since: farPast)
+        XCTAssertEqual(result.events.count, 1)
+        XCTAssertEqual(result.events.first?.totalTokens, 22)
+    }
+
+    func test_oldDirectoryWithNewEvent_isIncluded() {
+        let home = makeCodexHome(files: [:])
+        let oldDay = "2000/01/01"
+        let content = """
+        {"timestamp":"\(fixtureDay)T09:01:00.000Z","type":"event","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":19,"cached_input_tokens":0,"output_tokens":6,"reasoning_output_tokens":0,"total_tokens":25}}}}
+        """
+        let dest = home.appendingPathComponent("sessions").appendingPathComponent(oldDay).appendingPathComponent("new.jsonl")
+        try! FileManager.default.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try! content.write(to: dest, atomically: true, encoding: .utf8)
+        let result = CodexSessionParser(codexHomeForTesting: home.path).parse(since: farPast)
+        XCTAssertEqual(result.events.count, 1)
+        XCTAssertEqual(result.events.first?.totalTokens, 25)
+    }
+
+    func test_appendInvalidatesFullParseCache() {
+        let home = makeCodexHome(files: ["\(fixtureDir)/append.jsonl": """
+        {"timestamp":"\(fixtureDay)T09:02:00.000Z","type":"event","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":23,"cached_input_tokens":0,"output_tokens":7,"reasoning_output_tokens":0,"total_tokens":30}}}}
+        """])
+        let parser = CodexSessionParser(codexHomeForTesting: home.path)
+        XCTAssertEqual(parser.parse(since: farPast).events.count, 1)
+        let file = home.appendingPathComponent("sessions").appendingPathComponent(fixtureDir).appendingPathComponent("append.jsonl")
+        let extra = "{" + "\"timestamp\":\"\(fixtureDay)T09:03:00.000Z\",\"type\":\"event\",\"payload\":{\"type\":\"token_count\",\"info\":{\"last_token_usage\":{\"input_tokens\":29,\"cached_input_tokens\":0,\"output_tokens\":8,\"reasoning_output_tokens\":0,\"total_tokens\":37}}}}" + "\n"
+        let handle = try! FileHandle(forWritingTo: file)
+        handle.seekToEndOfFile()
+        handle.write(Data(extra.utf8))
+        try! handle.close()
+        XCTAssertEqual(parser.parse(since: farPast).events.count, 2)
+    }
 
     // MARK: Fixture (a): normal single session with two token_count events using last_token_usage
     //
@@ -189,10 +236,6 @@ final class CodexSessionParserTests: XCTestCase {
     }
 
     // MARK: Global dedup across files — identical (timestamp, tokens) events in two files
-    //
-    // Archived copies replicate the same lines verbatim. The global dedup key is
-    // (timestamp | model | inputTokens | cachedInputTokens | outputTokens | reasoningOutputTokens | totalTokens).
-    // Both files carry the same single event → only 1 event must appear in the result.
     func test_globalDedup_identicalEventsAcrossFilesCountedOnce() {
         let sharedLine = """
         {"timestamp":"\(fixtureDay)T15:00:00.000Z","type":"event","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":100,"cached_input_tokens":0,"output_tokens":40,"reasoning_output_tokens":0,"total_tokens":140}}}}
@@ -205,8 +248,7 @@ final class CodexSessionParserTests: XCTestCase {
         let result = parser.parse(since: farPast)
 
         XCTAssertEqual(result.events.count, 1,
-            "Identical events across multiple files must be deduplicated globally")
-        guard result.events.count == 1 else { return }
+            "Identical events across copied histories must be deduplicated globally")
     }
 
     // MARK: Delta fallback — when last_token_usage is absent, use total_token_usage diff
@@ -269,5 +311,16 @@ final class CodexSessionParserTests: XCTestCase {
             "Zero-delta token_count lines must not produce events")
         guard result.events.count == 1 else { return }
         XCTAssertEqual(result.events[0].inputTokens, 100)
+    }
+
+    func test_repeatedCumulativeSnapshot_doesNotDoubleCount() {
+        let content = """
+        {"timestamp":"\(fixtureDay)T18:00:00.000Z","type":"event","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":400,"cached_input_tokens":0,"output_tokens":150,"reasoning_output_tokens":0,"total_tokens":550},"last_token_usage":{"input_tokens":400,"cached_input_tokens":0,"output_tokens":150,"reasoning_output_tokens":0,"total_tokens":550}}}}
+        {"timestamp":"\(fixtureDay)T18:01:00.000Z","type":"event","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":400,"cached_input_tokens":0,"output_tokens":150,"reasoning_output_tokens":0,"total_tokens":550},"last_token_usage":{"input_tokens":400,"cached_input_tokens":0,"output_tokens":150,"reasoning_output_tokens":0,"total_tokens":550}}}}
+        """
+        let home = makeCodexHome(files: ["\(fixtureDir)/repeated_cumulative.jsonl": content])
+        let result = CodexSessionParser(codexHomeForTesting: home.path).parse(since: farPast)
+        XCTAssertEqual(result.events.count, 1)
+        XCTAssertEqual(result.events.first?.totalTokens, 550)
     }
 }

@@ -10,6 +10,7 @@ struct TokenUsageView: View {
     private var scope: TokenTimeScope { scopes[scopeIndex] }
 
     var body: some View {
+        let now = summary.lastParsed
         VStack(spacing: 8) {
             // Number + scope picker
             HStack(alignment: .top) {
@@ -21,7 +22,7 @@ struct TokenUsageView: View {
                             .fixedSize(horizontal: true, vertical: false)
                             .contentTransition(.numericText())
 
-                        Text("tokens")
+                        Text("tokens (incl. cache)")
                             .font(.system(size: 11))
                             .foregroundStyle(.quaternary)
                     }
@@ -123,7 +124,7 @@ struct TokenUsageView: View {
     }
 
     private var timeLabels: (start: String, end: String) {
-        let now = Date()
+        let now = summary.lastParsed
         let calendar = Calendar.current
         let tf = DateFormatter()
         tf.timeZone = .current
@@ -132,14 +133,14 @@ struct TokenUsageView: View {
         case .hour1:
             tf.dateFormat = "HH:mm"
             let start = calendar.date(byAdding: .minute, value: -60, to: now)!
-            return (tf.string(from: start), "now")
+            return (tf.string(from: start), tf.string(from: now))
         case .hours24:
             tf.dateFormat = "HH:mm"
-            let start = calendar.date(byAdding: .hour, value: -23, to: now)!
-            return (tf.string(from: start), "now")
+            let start = calendar.date(byAdding: .hour, value: -24, to: now)!
+            return (tf.string(from: start), tf.string(from: now))
         case .days7:
             tf.dateFormat = "M/d"
-            let start = calendar.date(byAdding: .day, value: -6, to: now)!
+            let start = now.addingTimeInterval(-Double(24 * 7) * 3600)
             return (tf.string(from: start), tf.string(from: now))
         }
     }
@@ -178,62 +179,30 @@ struct TokenUsageView: View {
 
     private var barsForCurrentScope: [BarEntry] {
         switch scope {
-        case .hour1: return minuteBars(count: 12, minutesPerBar: 5)
-        case .hours24: return hourBars(count: 24)
-        case .days7: return dayBars(count: 7)
+        case .hour1: return bucketBars(hours: 1, count: 12)
+        case .hours24: return bucketBars(hours: 24, count: 24)
+        case .days7: return bucketBars(hours: 24 * 7, count: 7)
         }
     }
 
-    private func minuteBars(count: Int, minutesPerBar: Int) -> [BarEntry] {
-        let now = Date()
-        let cutoff = Calendar.current.date(byAdding: .minute, value: -(count * minutesPerBar), to: now)!
-        var buckets = Array(repeating: Int64(0), count: count)
-        for entry in summary.hourly where entry.timestamp >= cutoff {
-            let mins = Int(entry.timestamp.timeIntervalSince(cutoff) / 60)
-            let bucket = min(count - 1, mins / minutesPerBar)
-            buckets[bucket] += entry.totalTokens
-        }
-        return buckets.enumerated().map { i, t in BarEntry(tokens: t, isCurrent: i == count - 1) }
-    }
-
-    private func hourBars(count: Int) -> [BarEntry] {
-        let calendar = Calendar.current
-        let now = Date()
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd HH"
-        f.timeZone = .current
-        let hourlyMap = Dictionary(uniqueKeysWithValues: summary.hourly.map { ($0.hourKey, $0.totalTokens) })
-        return (0..<count).map { i in
-            let date = calendar.date(byAdding: .hour, value: -(count - 1 - i), to: now)!
-            return BarEntry(tokens: hourlyMap[f.string(from: date)] ?? 0, isCurrent: i == count - 1)
-        }
-    }
-
-    private func dayBars(count: Int) -> [BarEntry] {
-        let calendar = Calendar.current
-        let now = Date()
-        let todayKey = TokenUsageSummary.dayKey(for: now)
-        let dailyMap = Dictionary(uniqueKeysWithValues: summary.daily.map { ($0.date, $0.totalTokens) })
-        return (0..<count).map { i in
-            let date = calendar.date(byAdding: .day, value: -(count - 1 - i), to: now)!
-            let key = TokenUsageSummary.dayKey(for: date)
-            return BarEntry(tokens: dailyMap[key] ?? 0, isCurrent: key == todayKey)
-        }
+    private func bucketBars(hours: Int, count: Int) -> [BarEntry] {
+        summary.buckets(inLastHours: hours, count: count, now: summary.lastParsed)
+            .enumerated().map { BarEntry(tokens: $0.element, isCurrent: $0.offset == count - 1) }
     }
 
     private var tokensForScope: Int64 {
         switch scope {
-        case .hour1: return summary.tokens(inLastHours: 1)
-        case .hours24: return summary.todayTokens
-        case .days7: return summary.weekTokens
+        case .hour1: return summary.tokens(inLastHours: 1, now: summary.lastParsed)
+        case .hours24: return summary.tokens(inLastHours: 24, now: summary.lastParsed)
+        case .days7: return summary.tokens(inLastHours: 24 * 7, now: summary.lastParsed)
         }
     }
 
     private var costForScope: Double {
         switch scope {
-        case .hour1: return summary.cost(inLastHours: 1)
-        case .hours24: return summary.todayCost
-        case .days7: return summary.weekCost
+        case .hour1: return summary.cost(inLastHours: 1, now: summary.lastParsed)
+        case .hours24: return summary.cost(inLastHours: 24, now: summary.lastParsed)
+        case .days7: return summary.cost(inLastHours: 24 * 7, now: summary.lastParsed)
         }
     }
 
