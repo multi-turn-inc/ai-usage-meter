@@ -7,20 +7,25 @@ struct UsageHistoryEntry: Codable, Identifiable {
     let timestamp: Date
     let fiveHourUsage: Double?
     let sevenDayUsage: Double?
+    /// Which login the sample came from. One provider can have several, and
+    /// their numbers are unrelated; nil in entries written before accounts.
+    let accountId: String?
 
-    init(serviceType: ServiceType, fiveHourUsage: Double?, sevenDayUsage: Double?, timestamp: Date = Date()) {
+    init(serviceType: ServiceType, fiveHourUsage: Double?, sevenDayUsage: Double?,
+         accountId: String? = nil, timestamp: Date = Date()) {
         self.id = UUID()
         self.serviceType = serviceType
         self.timestamp = timestamp
         self.fiveHourUsage = fiveHourUsage
         self.sevenDayUsage = sevenDayUsage
+        self.accountId = accountId
     }
 }
 
 class UsageHistoryStore {
     static let shared = UsageHistoryStore()
 
-    // Keep at most one sample per service and minute, independent of refresh rate.
+    // Keep at most one sample per login and minute, independent of refresh rate.
     private static let retentionInterval: TimeInterval = 7 * 24 * 60 * 60
     private let fileURL: URL
 
@@ -57,7 +62,9 @@ class UsageHistoryStore {
         var latestByMinute: [String: UsageHistoryEntry] = [:]
         for entry in entries where entry.timestamp > cutoff && entry.timestamp <= now {
             let minute = Int(entry.timestamp.timeIntervalSince1970 / 60)
-            let key = "\(entry.serviceType.rawValue):\(minute)"
+            // Per login, not per provider: several logins refresh within the
+            // same minute, and keying by provider kept one and dropped the rest.
+            let key = "\(entry.serviceType.rawValue):\(entry.accountId ?? "-"):\(minute)"
             if latestByMinute[key].map({ $0.timestamp < entry.timestamp }) ?? true {
                 latestByMinute[key] = entry
             }

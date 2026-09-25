@@ -56,11 +56,17 @@ public final class CodexSessionParser: @unchecked Sendable {
     }
 
     private let codexHome: String
-    private let lock = NSLock()
+    /// Guards `cache`, `parsing` and `lastStamp`. Never held during a scan.
+    private let condition = NSCondition()
     private var cache: (result: Result, at: Date)?
+    /// True while one caller scans. Others get the previous result instead of
+    /// waiting — only the very first scan, with nothing to serve, is waited for.
+    private var parsing = false
+    /// What the rollouts looked like at the last scan, for cheap change checks.
+    private var lastStamp: ScanStamp?
     /// Per-file parsed results, keyed by path, reused while size+mtime are unchanged so
     /// only files Codex actually appended to get re-read (static older files are skipped).
-    /// Only touched inside the serialized doParse, so no extra locking needed.
+    /// Only touched by the one caller holding `parsing`, so no extra locking needed.
     private var fileCache: [String: FileCacheEntry] = [:]
     private let cacheTTL: TimeInterval = 300
     /// Widest window any caller needs (7-day) plus slack for timezone/mtime edges.
@@ -108,19 +114,79 @@ public final class CodexSessionParser: @unchecked Sendable {
     }
 
     private func cachedFullParse() -> Result {
-        lock.lock()
+        condition.lock()
+        while parsing {
+            // A scan is running (they take seconds on long histories). Serve the
+            // last result rather than blocking a caller — usually an async refresh
+            // job — until it finishes; only a cold start has nothing to serve.
+            if let cache {
+                condition.unlock()
+                return cache.result
+            }
+            condition.wait()
+        }
         if let cache, Date().timeIntervalSince(cache.at) < cacheTTL,
-           !hasChangedFiles(since: Date().addingTimeInterval(-Double(windowDays) * 86400)) {
-            lock.unlock()
+           let lastStamp, currentStamp(knownFiles: lastStamp.files) == lastStamp {
+            condition.unlock()
             return cache.result
         }
+        parsing = true
+        condition.unlock()
 
         let windowStart = Date().addingTimeInterval(-Double(windowDays) * 86400)
         let result = doParse(since: windowStart)
+        let stamp = currentStamp(knownFiles: fileCache.mapValues { FileStamp(size: $0.size, mtime: $0.mtime) })
 
+        condition.lock()
         cache = (result, Date())
-        lock.unlock()
+        lastStamp = stamp
+        parsing = false
+        condition.broadcast()
+        condition.unlock()
         return result
+    }
+
+    private struct FileStamp: Equatable {
+        let size: Int
+        let mtime: TimeInterval
+    }
+
+    /// Cheap evidence that the rollouts changed: a known file grew or was
+    /// touched, or a file appeared where new sessions are written (the last two
+    /// days' directories) or in the archive. A full walk of the history on
+    /// every call cost more than the parse cache saved; files that change
+    /// anywhere else are picked up when the cache expires.
+    private struct ScanStamp: Equatable {
+        let files: [String: FileStamp]
+        let directories: [String: TimeInterval]
+    }
+
+    private func currentStamp(knownFiles: [String: FileStamp]) -> ScanStamp {
+        let fm = FileManager.default
+        func mtime(_ path: String) -> TimeInterval {
+            ((try? fm.attributesOfItem(atPath: path)[.modificationDate]) as? Date)?.timeIntervalSince1970 ?? -1
+        }
+        var files: [String: FileStamp] = [:]
+        for path in knownFiles.keys {
+            let attributes = try? fm.attributesOfItem(atPath: path)
+            files[path] = FileStamp(
+                size: (attributes?[.size] as? NSNumber)?.intValue ?? -1,
+                mtime: (attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? -1
+            )
+        }
+
+        let calendar = Calendar.current
+        var directories: [String: TimeInterval] = [:]
+        for daysAgo in 0...1 {
+            guard let day = calendar.date(byAdding: .day, value: -daysAgo, to: Date()) else { continue }
+            let parts = calendar.dateComponents([.year, .month, .day], from: day)
+            let path = String(format: "%@/sessions/%04d/%02d/%02d",
+                              codexHome, parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
+            directories[path] = mtime(path)
+        }
+        let archive = codexHome + "/archived_sessions"
+        directories[archive] = mtime(archive)
+        return ScanStamp(files: files, directories: directories)
     }
 
     // MARK: - Parsing
@@ -163,9 +229,10 @@ public final class CodexSessionParser: @unchecked Sendable {
         return result
     }
 
-    /// Collects rollout files from sessions/ and archived_sessions/, pruning the
-    /// YYYY/MM/DD directory tree by date before touching files. Archived copies of a
-    /// file already seen under sessions/ are skipped (same rollout filename).
+    /// Collects rollout files from sessions/ and archived_sessions/ by walking both
+    /// trees and filtering on file mtime — not by directory date, since a resumed
+    /// session appends to a file under an old date. Archived copies of a file already
+    /// seen under sessions/ are skipped (same rollout filename).
     /// Returned sorted by modification date ascending so the newest file's
     /// rate_limits win.
     private func sessionFiles(since: Date) -> [URL] {
@@ -191,18 +258,6 @@ public final class CodexSessionParser: @unchecked Sendable {
         }
 
         return collected.sorted { $0.modDate < $1.modDate }.map(\.url)
-    }
-
-    private func hasChangedFiles(since: Date) -> Bool {
-        let files = sessionFiles(since: since)
-        if files.count != fileCache.count { return true }
-        for file in files {
-            let attrs = try? file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
-            let size = attrs?.fileSize ?? -1
-            let mtime = attrs?.contentModificationDate?.timeIntervalSince1970 ?? -1
-            guard let cached = fileCache[file.path], cached.size == size, cached.mtime == mtime else { return true }
-        }
-        return false
     }
 
     /// Streams one rollout file, returning its in-window usage deltas and the most recent

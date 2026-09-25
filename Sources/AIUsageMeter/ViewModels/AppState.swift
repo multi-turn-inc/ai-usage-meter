@@ -583,7 +583,8 @@ class AppState {
             let historyEntry = UsageHistoryEntry(
                 serviceType: services[index].config.serviceType,
                 fiveHourUsage: usage.fiveHourUsage,
-                sevenDayUsage: usage.sevenDayUsage
+                sevenDayUsage: usage.sevenDayUsage,
+                accountId: services[index].account?.id
             )
             UsageHistoryStore.shared.saveEntry(historyEntry)
             return nil

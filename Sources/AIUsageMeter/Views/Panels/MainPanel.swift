@@ -18,6 +18,8 @@ struct MainPanel: View {
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(.secondary)
                             .contentTransition(.numericText())
+                            // Counted with cache reads and writes, for both providers.
+                            .help("Claude + Codex tokens today, including cache reads and writes")
                     }
                 }
 

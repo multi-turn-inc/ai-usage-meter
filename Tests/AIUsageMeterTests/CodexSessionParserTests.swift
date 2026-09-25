@@ -87,8 +87,11 @@ final class CodexSessionParserTests: XCTestCase {
     }
 
     func test_appendInvalidatesFullParseCache() {
+        // Codex ends every line with a newline, so an append starts a fresh line.
+        // Without it the fixture glued the new line onto the last one and lost both.
         let home = makeCodexHome(files: ["\(fixtureDir)/append.jsonl": """
         {"timestamp":"\(fixtureDay)T09:02:00.000Z","type":"event","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":23,"cached_input_tokens":0,"output_tokens":7,"reasoning_output_tokens":0,"total_tokens":30}}}}
+
         """])
         let parser = CodexSessionParser(codexHomeForTesting: home.path)
         XCTAssertEqual(parser.parse(since: farPast).events.count, 1)
@@ -98,6 +101,31 @@ final class CodexSessionParserTests: XCTestCase {
         handle.seekToEndOfFile()
         handle.write(Data(extra.utf8))
         try! handle.close()
+        XCTAssertEqual(parser.parse(since: farPast).events.count, 2)
+    }
+
+    // A session started after the last scan lands in today's directory. It must
+    // show up at once, not when the five-minute parse cache happens to expire.
+    func test_newSessionTodayInvalidatesFullParseCache() {
+        let home = makeCodexHome(files: ["\(fixtureDir)/first.jsonl": """
+        {"timestamp":"\(fixtureDay)T09:02:00.000Z","type":"event","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":23,"cached_input_tokens":0,"output_tokens":7,"reasoning_output_tokens":0,"total_tokens":30}}}}
+
+        """])
+        let parser = CodexSessionParser(codexHomeForTesting: home.path)
+        XCTAssertEqual(parser.parse(since: farPast).events.count, 1)
+
+        let f = DateFormatter()
+        f.dateFormat = "yyyy/MM/dd"
+        let today = home.appendingPathComponent("sessions").appendingPathComponent(f.string(from: Date()))
+        try! FileManager.default.createDirectory(at: today, withIntermediateDirectories: true)
+        // Directory mtimes have one-second resolution; make sure this one moves.
+        Thread.sleep(forTimeInterval: 1.1)
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        try! """
+        {"timestamp":"\(stamp)","type":"event","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":5,"cached_input_tokens":0,"output_tokens":5,"reasoning_output_tokens":0,"total_tokens":10}}}}
+
+        """.write(to: today.appendingPathComponent("second.jsonl"), atomically: true, encoding: .utf8)
+
         XCTAssertEqual(parser.parse(since: farPast).events.count, 2)
     }
 

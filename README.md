@@ -54,7 +54,7 @@ Each service cell encodes two things at once:
 - **Horizontal fill** → 5-hour quota remaining
 - **Bar height** → 7-day quota remaining
 
-While an agent is actively calling APIs, the bars pulse with a heartbeat animation. Each cell shows the plan you're on for that provider.
+While an agent is actively calling APIs, the bars pulse with a light heartbeat — a few frames a second, and none at all when nothing is running. Each cell shows the plan you're on for that provider.
 
 ## In the Panel
 
@@ -83,7 +83,7 @@ Token Burn reuses the OAuth credentials your CLI tools already have. **It never 
 
 - Quota comes from each provider's usage API; token counts come from parsing local session logs in a single streaming pass
 - Plan identity comes from the credential: Claude's `oauth/profile`, the claims inside a Codex token, and ChatGPT's account list for the workspaces a login can reach
-- Replayed and resumed history is deduplicated (ccusage-style accounting) — counts `input + output` tokens, matching Claude's `/stats`
+- Replayed and resumed history is deduplicated (ccusage-style accounting). Token counts include cache reads and writes for both Claude and Codex, so the two providers compare like for like
 - Expired tokens are refreshed via the standard OAuth flow; deleted credential files are restored from Keychain
 - Everything stays local — logs are parsed on your machine and never uploaded
 
