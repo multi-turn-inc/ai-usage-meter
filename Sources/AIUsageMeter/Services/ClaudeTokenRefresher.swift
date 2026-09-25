@@ -43,7 +43,9 @@ enum ClaudeTokenRefresher {
         guard let refreshToken = credentials.refreshToken, !refreshToken.isEmpty else {
             throw TokenRefreshError.noCredentials
         }
-        var request = URLRequest(url: URL(string: "https://console.anthropic.com/v1/oauth/token")!)
+        // Claude Code moved its token endpoint from console.anthropic.com to
+        // platform.claude.com; follow the CLI rather than a retired host.
+        var request = URLRequest(url: URL(string: "https://platform.claude.com/v1/oauth/token")!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try? JSONSerialization.data(withJSONObject: [

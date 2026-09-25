@@ -98,11 +98,17 @@ struct AuthErrorView: View {
         }
     }
 
-    /// Drops the leading account label: the card names the account already.
+    /// Drops what the card already says or no one needs to read: the
+    /// transport's "HTTP error 401: " and the leading account label.
     private func stripped(_ error: String) -> String {
-        guard let label = service.account?.label,
-              error.hasPrefix("\(label): ") else { return error }
-        return String(error.dropFirst(label.count + 2))
+        var message = error
+        if let range = message.range(of: #"^HTTP error \d+: "#, options: .regularExpression) {
+            message.removeSubrange(range)
+        }
+        if let label = service.account?.label, message.hasPrefix("\(label): ") {
+            message = String(message.dropFirst(label.count + 2))
+        }
+        return message
     }
 
     private var buttonLabel: String {

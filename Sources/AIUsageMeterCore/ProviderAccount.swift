@@ -38,10 +38,25 @@ public struct ProviderAccount: Identifiable, Sendable, Equatable {
     /// The config home this login lives in (`CLAUDE_CONFIG_DIR` / `CODEX_HOME`),
     /// so a re-login can be pointed at this account instead of the machine default.
     public let configDir: String?
+    /// "Max 20x", "Team 5x", "Business" — as declared where the login was found.
+    public let planName: String?
+    /// The person behind the login, across orgs (Claude account uuid, ChatGPT
+    /// user id).
+    public let personKey: String?
+    /// The quota bucket, when the credential itself proves it: a Codex access
+    /// token names its member and workspace in its own claims. Claude tokens are
+    /// opaque, so theirs is only known after asking the API.
+    public let evidenceKey: String?
+    /// The quota bucket as the identity file beside the credential declares it,
+    /// in the same `person|org` form as the evidence. Declared, not proven —
+    /// trusted only where the CLI wrote file and credential together.
+    public let declaredPlanKey: String?
 
     public init(id: String, service: ServiceType, email: String?, organizationName: String?,
                 identityKey: String, source: CredentialSource, isDefault: Bool,
-                chatGPTAccountId: String? = nil, configDir: String? = nil) {
+                chatGPTAccountId: String? = nil, configDir: String? = nil,
+                planName: String? = nil, personKey: String? = nil, evidenceKey: String? = nil,
+                declaredPlanKey: String? = nil) {
         self.id = id
         self.service = service
         self.email = email
@@ -51,6 +66,10 @@ public struct ProviderAccount: Identifiable, Sendable, Equatable {
         self.isDefault = isDefault
         self.chatGPTAccountId = chatGPTAccountId
         self.configDir = configDir
+        self.planName = planName
+        self.personKey = personKey
+        self.evidenceKey = evidenceKey
+        self.declaredPlanKey = declaredPlanKey
     }
 
     /// True when this app created the login itself, in a config home it owns.
@@ -118,6 +137,10 @@ public enum AccountDiscovery {
         return "Claude Code-credentials-\(suffix)"
     }
 
+    /// Where Claude Code keeps the default login's credentials when
+    /// CLAUDE_CONFIG_DIR is unset.
+    public static let claudeUnscopedKeychainService = "Claude Code-credentials"
+
     /// Marks a config home this app created, so an abandoned login can be told
     /// apart from one whose credentials simply live in the Keychain.
     public static let selfManagedMarker = ".token-burn-account"
@@ -149,38 +172,51 @@ public enum AccountDiscovery {
 
     // MARK: - Claude
 
+    /// - Parameter readsUnscopedItem: whether the unscoped Keychain item speaks
+    ///   for this `home`. It belongs to the signed-in user rather than to a
+    ///   path, so by default only the real home consults it.
     public static func discoverClaude(
         home: URL,
-        keychainModified: @escaping KeychainTimestampReader = defaultKeychainModified
+        keychainModified: @escaping KeychainTimestampReader = defaultKeychainModified,
+        readsUnscopedItem: Bool? = nil
     ) -> [ProviderAccount] {
         var accounts: [ProviderAccount] = []
         let fm = FileManager.default
+        let readsUnscoped = readsUnscopedItem
+            ?? (home.standardizedFileURL == fm.homeDirectoryForCurrentUser.standardizedFileURL)
 
-        // 1. CLI default. Older Claude Code kept credentials in a file; 2.1+ moved
-        // them to a scoped Keychain item and stopped touching the file. A machine
-        // that has been through both keeps the file — frozen at whatever token it
-        // held on upgrade day — so trusting it because it exists means reporting a
-        // login that expired months ago and can never recover, no matter how often
-        // the user signs in again. Whichever store was written last is the live one.
+        // 1. CLI default. Its credentials can sit in three places, and a machine
+        // that has lived through several Claude Code versions has all three:
+        //   - the file ~/.claude/.credentials.json, which older versions wrote;
+        //   - the unscoped Keychain item, which current versions write when
+        //     CLAUDE_CONFIG_DIR is unset — the everyday case;
+        //   - the item scoped to ~/.claude, written only when CLAUDE_CONFIG_DIR
+        //     was set to ~/.claude explicitly, as a launcher does.
+        // The ones not in use stay frozen at whatever token they last held.
+        // Reading the scoped item alone reported the everyday login as expired
+        // for weeks while the CLI was signed in and working. Whichever store was
+        // written last is the live one.
         let configDir = home.appendingPathComponent(".claude")
         let defaultCreds = configDir.appendingPathComponent(".credentials.json")
         let scopedService = claudeScopedKeychainService(forConfigDir: configDir.path)
         let fileWrittenAt = (try? fm.attributesOfItem(atPath: defaultCreds.path)[.modificationDate]) as? Date
-        let keychainWrittenAt = keychainModified(scopedService, NSUserName())
 
-        if fileWrittenAt != nil || keychainWrittenAt != nil {
-            let preferKeychain: Bool = {
-                guard let keychainWrittenAt else { return false }
-                guard let fileWrittenAt else { return true }
-                return keychainWrittenAt > fileWrittenAt
-            }()
+        let stores: [(source: ProviderAccount.CredentialSource, writtenAt: Date)] = [
+            fileWrittenAt.map { (.file(path: defaultCreds.path), $0) },
+            (readsUnscoped ? keychainModified(claudeUnscopedKeychainService, NSUserName()) : nil).map {
+                (.keychain(service: claudeUnscopedKeychainService, account: NSUserName()), $0)
+            },
+            keychainModified(scopedService, NSUserName()).map {
+                (.keychain(service: scopedService, account: NSUserName()), $0)
+            },
+        ].compactMap { $0 }
+
+        if let live = stores.max(by: { $0.writtenAt < $1.writtenAt }) {
             let account = readJSONObject(at: home.appendingPathComponent(".claude.json"))?["oauthAccount"] as? [String: Any]
             accounts.append(makeClaudeAccount(
                 id: "claude:default",
                 identity: account,
-                source: preferKeychain
-                    ? .keychain(service: scopedService, account: NSUserName())
-                    : .file(path: defaultCreds.path),
+                source: live.source,
                 isDefault: true,
                 fallbackKey: defaultCreds.path,
                 configDir: configDir.path
@@ -240,15 +276,18 @@ public enum AccountDiscovery {
         let key = (email != nil || orgUuid != nil)
             ? "\(email ?? "?")|\(orgUuid ?? "?")"
             : fallbackKey
+        let declared = identity.map(ClaudeProfile.fromOAuthAccount)
         return ProviderAccount(
             id: id, service: .claude, email: email,
-            organizationName: prettyOrgName(orgName, email: email),
-            identityKey: key, source: source, isDefault: isDefault, configDir: configDir
+            organizationName: prettyOrgName(orgName),
+            identityKey: key, source: source, isDefault: isDefault, configDir: configDir,
+            planName: declared?.planName, personKey: declared?.accountUuid,
+            declaredPlanKey: declared?.planKey
         )
     }
 
     /// "hebo1221@gmail.com's Organization" is just the personal org — say so briefly.
-    private static func prettyOrgName(_ name: String?, email: String?) -> String? {
+    public static func prettyOrgName(_ name: String?) -> String? {
         guard let name else { return nil }
         if name.hasSuffix("'s Organization") { return "Personal" }
         return name
@@ -290,19 +329,23 @@ public enum AccountDiscovery {
     private static func makeCodexAccount(id: String, authFile: URL, isDefault: Bool) -> ProviderAccount {
         let root = readJSONObject(at: authFile)
         let tokens = root?["tokens"] as? [String: Any]
-        let workspaceId = tokens?["account_id"] as? String
         let claims = (tokens?["id_token"] as? String).flatMap(decodeJWTPayload)
-        let email = codexEmail(from: claims)
-        // The ChatGPT workspace id *is* the account identity: one login can hold
-        // several workspaces that bill separately.
-        let key = workspaceId ?? "\(email ?? "?")|\(authFile.path)"
+        let token = root.flatMap(CodexTokenIdentity.from(authJSON:))
+        // The workspace the token was issued in, from its own claims when it
+        // has them: one login can hold several workspaces that bill separately.
+        let workspaceId = token?.workspaceId ?? tokens?["account_id"] as? String
+        let email = codexEmail(from: claims) ?? token?.email
+        let key = token?.planKey ?? workspaceId ?? "\(email ?? "?")|\(authFile.path)"
         let workspaceLabel = workspaceId.map { "ws " + String($0.prefix(8)) }
         return ProviderAccount(
             id: id, service: .codex, email: email,
             organizationName: workspaceLabel,
             identityKey: key, source: .file(path: authFile.path),
             isDefault: isDefault, chatGPTAccountId: workspaceId,
-            configDir: authFile.deletingLastPathComponent().path
+            configDir: authFile.deletingLastPathComponent().path,
+            planName: PlanNames.chatGPT(planType: token?.planType),
+            personKey: token?.userId,
+            evidenceKey: token?.planKey
         )
     }
 
@@ -380,7 +423,11 @@ public enum AccountDiscovery {
                 source: preferred.source,
                 isDefault: preferred.isDefault,
                 chatGPTAccountId: preferred.chatGPTAccountId ?? named.chatGPTAccountId,
-                configDir: preferred.configDir
+                configDir: preferred.configDir,
+                planName: named.planName ?? preferred.planName,
+                personKey: named.personKey ?? preferred.personKey,
+                evidenceKey: preferred.evidenceKey ?? named.evidenceKey,
+                declaredPlanKey: named.declaredPlanKey ?? preferred.declaredPlanKey
             ))
         }
 
@@ -388,6 +435,43 @@ public enum AccountDiscovery {
             $0.service == $1.service
                 ? ($0.isDefault != $1.isDefault ? $0.isDefault : $0.label < $1.label)
                 : $0.service.rawValue < $1.service.rawValue
+        }
+    }
+
+    /// Collapses logins that the credential itself proves are one quota bucket.
+    ///
+    /// Two logins into the same workspace share every limit, so listing both
+    /// doubles the row, the requests, and — once one of them goes stale — shows a
+    /// broken twin of a healthy plan. Unlike `dedupe`, this trusts no declared
+    /// name: `evidenceKey` comes from the token's own claims.
+    ///
+    /// The survivor holds the freshest credential; a tie goes to the CLI default,
+    /// the login the user actually works in. Accounts without evidence pass
+    /// through untouched.
+    public static func mergeByEvidence(
+        _ accounts: [ProviderAccount],
+        freshness: (ProviderAccount) -> Date?
+    ) -> [ProviderAccount] {
+        func key(_ account: ProviderAccount) -> String? {
+            account.evidenceKey.map { "\(account.service.rawValue):\($0)" }
+        }
+        var survivor: [String: ProviderAccount] = [:]
+        for account in accounts {
+            guard let key = key(account) else { continue }
+            guard let current = survivor[key] else {
+                survivor[key] = account
+                continue
+            }
+            let candidateDate = freshness(account) ?? .distantPast
+            let currentDate = freshness(current) ?? .distantPast
+            if candidateDate > currentDate
+                || (candidateDate == currentDate && account.isDefault && !current.isDefault) {
+                survivor[key] = account
+            }
+        }
+        return accounts.filter { account in
+            guard let key = key(account) else { return true }
+            return survivor[key]?.id == account.id
         }
     }
 

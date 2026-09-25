@@ -44,15 +44,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         menuBarController = controller
 
-        // Make the heat advisor resident so it watches thermal state from launch
-        // (no-op unless the user opted in and set an API key).
-        ThermalAdvisor.shared.start()
-
         // Blog render mode: AIM_BLOG_RENDER=1 ./AIUsageMeter
         if isBlogRenderMode {
             Task { @MainActor in
-                // Wait for data to load
-                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                // Wait for data to load. Every plan is fetched in turn, so a
+                // machine with several logins needs longer than the default.
+                let delay = Double(ProcessInfo.processInfo.environment["AIM_BLOG_RENDER_DELAY"] ?? "") ?? 3
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                if AppState.isFixtureRun { BlogRenderer.installFixture(into: appState) }
                 BlogRenderer.renderAll(appState: appState)
                 NSApp.terminate(nil)
             }

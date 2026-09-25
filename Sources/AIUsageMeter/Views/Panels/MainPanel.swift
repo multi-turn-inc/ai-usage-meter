@@ -4,13 +4,7 @@ struct MainPanel: View {
     @Bindable var appState: AppState
     @Binding var showSettings: Bool
 
-    @State private var appeared = false
     @State private var showLegendHelp = false
-
-    // Which view to show is driven by which menu-bar cell was clicked
-    // (appState.panelTab), not an in-panel switcher.
-    private var tab: PanelTab { loadTabEnabled ? appState.panelTab : .usage }
-    private var loadTabEnabled: Bool { AppDefaults.userDefaults.object(forKey: "loadTabEnabled") as? Bool ?? true }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -39,15 +33,9 @@ struct MainPanel: View {
                 .buttonStyle(.plain)
                 .focusEffectDisabled()
                 .popover(isPresented: $showLegendHelp) {
-                    if tab == .load && loadTabEnabled {
-                        LoadHelpContent()
-                            .padding(14)
-                            .frame(width: 280)
-                    } else {
-                        MenuBarLegendContent(showsDescription: true)
-                            .padding(14)
-                            .frame(width: 280)
-                    }
+                    MenuBarLegendContent(showsDescription: true)
+                        .padding(14)
+                        .frame(width: 280)
                 }
 
                 Button {
@@ -63,58 +51,15 @@ struct MainPanel: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
 
-            if tab == .load && loadTabEnabled {
-                LoadView()
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 10)
-            } else {
-                VStack(spacing: 14) {
-                    // A grid, not an HStack: five gauges in a row are ~480pt wide
-                    // and the panel is 300, so a row silently clipped the extras
-                    // *and* dragged the cards below out of alignment.
-                    LazyVGrid(columns: gaugeColumns, spacing: 12) {
-                        ForEach(Array(gaugeServices.enumerated()), id: \.element.id) { index, service in
-                            CircularGaugeView(
-                                service: service,
-                                compact: gaugeServices.count >= 3,
-                                mini: gaugeServices.count > 3,
-                                onPinChanged: { appState.menuBarNeedsRedraw += 1 }
-                            )
-                            .opacity(appeared ? 1 : 0)
-                            .offset(y: appeared ? 0 : 12)
-                            .animation(
-                                .spring(response: 0.5, dampingFraction: 0.7)
-                                    .delay(Double(index) * 0.08),
-                                value: appeared
-                            )
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
-
-                    VStack(spacing: 10) {
-                        ForEach(Array(enabledServices.enumerated()), id: \.element.id) { index, service in
-                            DetailCard(
-                                service: service,
-                                onRefresh: { Task { await appState.refresh(interactive: true) } }
-                            )
-                                .opacity(appeared ? 1 : 0)
-                                .offset(y: appeared ? 0 : 16)
-                                .animation(
-                                    .spring(response: 0.5, dampingFraction: 0.75)
-                                        .delay(0.15 + Double(index) * 0.08),
-                                    value: appeared
-                                )
-                        }
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 10)
-                // Each account adds a card, so the stack grows without bound and
-                // the window can only clip it. Cap the height and scroll instead;
-                // the header and footer stay put.
-                .scrollableIfTallerThan(420)
+            PlanBoardView(appState: appState) {
+                Task { await appState.refresh(interactive: true) }
             }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 10)
+            // Each plan adds a card row, so the board grows without bound and
+            // the window can only clip it. Cap the height and scroll instead; the
+            // header and footer stay put.
+            .scrollableIfTallerThan(AppState.isRenderRun ? 4000 : 600)
 
             Divider().opacity(0.3).padding(.horizontal, 16)
 
@@ -149,27 +94,6 @@ struct MainPanel: View {
             .padding(.vertical, 10)
             .animation(.easeInOut(duration: 0.3), value: appState.isRefreshing)
         }
-        .onAppear {
-            withAnimation { appeared = true }
-        }
-    }
-
-    private var enabledServices: [ServiceViewModel] {
-        appState.services.filter { $0.config.isEnabled }
-    }
-
-    /// One gauge per account. The menu-bar icon collapses to one cell per
-    /// provider because its width is scarce; the panel has room, and seeing each
-    /// login's headroom side by side is the point of tracking several.
-    private var gaugeServices: [ServiceViewModel] {
-        enabledServices
-    }
-
-    /// Up to three per row so the widest case (five mini gauges) wraps to two
-    /// rows instead of overflowing the fixed-width panel.
-    private var gaugeColumns: [GridItem] {
-        let perRow = min(max(gaugeServices.count, 1), 3)
-        return Array(repeating: GridItem(.flexible(), spacing: 8), count: perRow)
     }
 
     private func formatLastUpdate(_ date: Date) -> String {

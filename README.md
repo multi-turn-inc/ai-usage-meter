@@ -2,9 +2,9 @@
 
 # Token Burn
 
-**See what your AI agents are burning — right from the menu bar.**
+**Every Claude and ChatGPT plan you can reach — and which one to burn right now.**
 
-Remaining quota, token burn, and system load for Claude Code & Codex, one glance away.
+Remaining quota and reset times for each plan, across accounts, orgs and workspaces, with a pick for what to use next.
 
 [![macOS](https://img.shields.io/badge/macOS-26%2B-000?logo=apple&logoColor=white)](https://www.apple.com/macos/)
 [![Swift](https://img.shields.io/badge/Swift-5.9-F05138?logo=swift&logoColor=white)](https://swift.org)
@@ -21,7 +21,29 @@ Remaining quota, token burn, and system load for Claude Code & Codex, one glance
 
 ## Why
 
-Agent sessions quietly eat through your 5-hour and weekly quotas while you work — and you usually find out the moment you hit the wall. Token Burn keeps the remaining budget in sight at all times, and shows how hard your Mac is working while the agents run.
+A personal Max plan, a Team seat at work, a ChatGPT Business workspace or two — each with its own 5-hour, weekly and credit limits, each resetting on its own clock. Quota you don't use before a reset is simply gone, and you usually find out which plan still had room only after you hit the wall on another.
+
+Token Burn lists every plan the machine can reach, shows what's left of each and when it refills, and tells you which one to spend now.
+
+## Which plan now
+
+**Use the plan whose quota resets first.** Whatever is left in it disappears at that reset; the others keep. Spending the first-expiring plan first — first-expiring, first-out — never leaves you with less usable quota than any other order, and it needs only reset times, so a Max plan and a Team seat compare fairly even though their percentages mean different amounts.
+
+On top of that rule:
+
+- A plan stuck on its 5-hour window is skipped for now, and the advice says when to come back to it
+- A plan with almost nothing left (under 5%) isn't worth starting a session on
+- Credit allowances (ChatGPT Business spend controls) count as limits — a workspace can have most of its rate limit left and almost none of its credits
+- Near-ties don't flip the pick on every refresh
+- The pick comes with the pace behind it: *"~40% would expire unused at this pace"*, or *"runs out 1d before reset"*
+
+The plan you're on now sits at the top of the panel with a verdict: *keep going*, or *switch to X* — with a button that copies the command to start a session on X. "On now" means the plan whose usage rose most recently, else the login your CLI uses. The menu bar shows that plan too; right-click any plan to pin it instead.
+
+## Every plan, not every login
+
+- **One person, several orgs.** The same email in a personal org and a team org is two plans, billed and limited separately — both are listed.
+- **One login, several ChatGPT workspaces.** A single ChatGPT login is shown every workspace it belongs to. Codex tokens only read the workspace they were issued in, so each workspace is connected with one browser sign-in, pinned to that workspace.
+- **Two logins, one plan.** Logins into the same plan are folded into one row, judged by what the credential proves (token claims, the account's own profile), never by a name written beside it.
 
 ## In the Menu Bar
 
@@ -32,19 +54,13 @@ Each service cell encodes two things at once:
 - **Horizontal fill** → 5-hour quota remaining
 - **Bar height** → 7-day quota remaining
 
-While an agent is actively calling APIs, the bars pulse with a heartbeat animation. An optional **system-load meter** (CPU × GPU, RAM as color) sits alongside — like a tiny activity monitor for agent workloads. Clicking a cell jumps straight to that view in the panel.
+While an agent is actively calling APIs, the bars pulse with a heartbeat animation. Each cell shows the plan you're on for that provider.
 
 ## In the Panel
 
-- **Circular gauges** per service — 5h / 7d remaining with reset countdown (*"3h 38m until reset"*)
-- **Token Burn chart** — 1h / 24h / 7d scope, switch by trackpad scroll, with cache-aware API-equivalent cost estimates
-- **System Load tab** — CPU × GPU gauge with RAM as color, top processes, and a glanceable heat strip on the main panel
-- **Heat advisor** *(optional)* — when your Mac runs hot, sends the top CPU process names to Claude using **your own** Anthropic API key and tells you what's cooking
-- **Staleness flags** — warns when a service stopped reporting fresh data
-
-<div align="center">
-<img src="docs/screenshot-load.png" width="280" alt="System Load tab with AI heat diagnosis">
-</div>
+- **In use** — the plan each provider is on now, its windows, and whether to keep going or switch (with the command to switch)
+- **Other plans** — every other plan with its account email, remaining share and time-to-reset for each window (5h, 7d, credits), plan tier (*Max 20x*, *Team 5x*, *Business*), the recommended one marked, and a one-click fix for any plan that needs a sign-in
+- **Workspaces to connect** — ChatGPT workspaces your login can reach but Token Burn can't read yet, one click from connected
 
 ## Install
 
@@ -62,10 +78,11 @@ Token Burn reuses the OAuth credentials your CLI tools already have. **It never 
 
 | Service | Credential source | Token source |
 |---------|-------------------|--------------|
-| Claude | Keychain / `~/.claude/.credentials.json` | `~/.claude/projects/**/*.jsonl` |
-| Codex | `~/.codex/auth.json` | `~/.codex/sessions/**/*.jsonl` |
+| Claude | Keychain / `~/.claude/.credentials.json`, plus any `CLAUDE_CONFIG_DIR` logins | `~/.claude/projects/**/*.jsonl` |
+| Codex | `~/.codex/auth.json`, plus any `CODEX_HOME` logins | `~/.codex/sessions/**/*.jsonl` |
 
 - Quota comes from each provider's usage API; token counts come from parsing local session logs in a single streaming pass
+- Plan identity comes from the credential: Claude's `oauth/profile`, the claims inside a Codex token, and ChatGPT's account list for the workspaces a login can reach
 - Replayed and resumed history is deduplicated (ccusage-style accounting) — counts `input + output` tokens, matching Claude's `/stats`
 - Expired tokens are refreshed via the standard OAuth flow; deleted credential files are restored from Keychain
 - Everything stays local — logs are parsed on your machine and never uploaded
@@ -75,8 +92,8 @@ Token Burn reuses the OAuth credentials your CLI tools already have. **It never 
 This app is a **read-only viewer**, built to be paranoid about your tokens:
 
 - OAuth tokens are only ever sent to each provider's own API hosts (hard allowlist — a tampered config file can't redirect them)
+- Logins Token Burn didn't create are never refreshed — refreshing rotates the token and would sign the owning CLI out. Only logins it created itself are kept alive
 - Credential files are written with `0600` permissions; the app never stores secrets of its own
-- The optional heat advisor is the only other network call, and it's off until you provide your own API key
 - Auto-update is triple-checked: Ed25519-signed Sparkle feed, notarization assessment, and Developer ID pinning — with downgrade protection
 
 ## More

@@ -20,6 +20,7 @@ final class AccountRegistry {
     private let hiddenKey = "hiddenAccountIDs"
     private let dismissedKey = "dismissedAccountIDs"
     private let aliasKey = "accountAliases"
+    private let dismissedWorkspacesKey = "dismissedWorkspaceIDs"
 
     /// Discovered but not monitored — still listed, just switched off.
     private(set) var hidden: Set<String> {
@@ -31,6 +32,11 @@ final class AccountRegistry {
     /// once.
     private(set) var dismissed: Set<String> {
         didSet { AppDefaults.userDefaults.set(Array(dismissed), forKey: dismissedKey) }
+    }
+
+    /// ChatGPT workspaces the user doesn't want offered for connection.
+    private(set) var dismissedWorkspaces: Set<String> {
+        didSet { AppDefaults.userDefaults.set(Array(dismissedWorkspaces), forKey: dismissedWorkspacesKey) }
     }
 
     /// User-chosen names. "hebo1221 · ws 8fa88dcb" identifies nothing at a
@@ -51,6 +57,14 @@ final class AccountRegistry {
         hidden = Set(AppDefaults.userDefaults.stringArray(forKey: hiddenKey) ?? [])
         dismissed = Set(AppDefaults.userDefaults.stringArray(forKey: dismissedKey) ?? [])
         aliases = AppDefaults.userDefaults.dictionary(forKey: aliasKey) as? [String: String] ?? [:]
+        dismissedWorkspaces = Set(AppDefaults.userDefaults.stringArray(forKey: dismissedWorkspacesKey) ?? [])
+        // Removing the CLI's own login is no longer possible; forget any old
+        // removal so "restore" doesn't count what is already back.
+        dismissed = dismissed.filter { !$0.hasSuffix(":default") }
+    }
+
+    func dismissWorkspace(_ workspace: ChatGPTWorkspace) {
+        dismissedWorkspaces.insert(workspace.id)
     }
 
     func isHidden(_ accountID: String) -> Bool { hidden.contains(accountID) }
@@ -106,6 +120,7 @@ final class AccountRegistry {
     /// outright; anything else is only dismissed, because deleting another app's
     /// credentials isn't this app's call.
     func remove(_ account: ProviderAccount) {
+        guard !account.isDefault else { return }
         if canDelete(account) {
             delete(account)
         } else {
@@ -116,7 +131,11 @@ final class AccountRegistry {
 
     func restoreDismissed() {
         dismissed.removeAll()
+        dismissedWorkspaces.removeAll()
     }
+
+    /// Everything the user has removed, for the "restore" count.
+    var dismissedCount: Int { dismissed.count + dismissedWorkspaces.count }
 
     /// Accounts to monitor, in discovery order.
     func visibleAccounts() -> [ProviderAccount] {
@@ -124,8 +143,20 @@ final class AccountRegistry {
     }
 
     func allAccounts() -> [ProviderAccount] {
-        collapseSharedCredentials(AccountDiscovery.discover())
-            .filter { !dismissed.contains($0.id) }
+        let accounts = collapseSharedCredentials(AccountDiscovery.discover())
+        // The login the CLI itself uses is the plan in use, so it is always
+        // listed; only other logins can be removed.
+        return AccountDiscovery.mergeByEvidence(accounts, freshness: credentialExpiry)
+            .filter { $0.isDefault || !dismissed.contains($0.id) }
+    }
+
+    /// When a file-backed Codex token expires, from its own claims — the
+    /// fresher of two logins into one workspace is the one worth keeping.
+    private func credentialExpiry(_ account: ProviderAccount) -> Date? {
+        guard account.service == .codex, case .file(let path) = account.source,
+              let data = FileManager.default.contents(atPath: path),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return CodexTokenIdentity.from(authJSON: json)?.expiresAt
     }
 
     /// Merges rows that share a credential. The rule lives in Core (and is
@@ -174,7 +205,12 @@ final class AccountRegistry {
     /// Creates an empty config home and runs the provider's browser login into
     /// it. The resulting credentials land in a file this app owns, so the new
     /// account reads without a Keychain prompt.
-    func addAccount(service: ServiceType, onFinished: @escaping () -> Void) {
+    ///
+    /// `workspace` pins a Codex login to one ChatGPT workspace. A token only
+    /// ever reads the workspace it was issued in, so connecting a workspace the
+    /// board found means a login made *for* that workspace.
+    func addAccount(service: ServiceType, workspace: ChatGPTWorkspace? = nil,
+                    onFinished: @escaping () -> Void) {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let dir = AccountDiscovery.newSelfManagedDir(for: service, home: home)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -194,13 +230,23 @@ final class AccountRegistry {
         )
 
         addStatus = nil
-        CLILoginLauncher.shared.login(service: service, account: pending) { [weak self] in
+        CLILoginLauncher.shared.login(service: service, account: pending,
+                                      forcedWorkspace: workspace?.id) { [weak self] in
             // Nothing was written if the user abandoned the browser flow; don't
             // leave an empty home behind to be rediscovered as a broken account.
             self?.discardIfEmpty(dir, service: service)
             self?.reportAddOutcome(dir: dir, service: service)
             onFinished()
         }
+    }
+
+    /// Whether a workspace connection is running, so its button can show it.
+    func isConnecting(_ workspace: ChatGPTWorkspace) -> Bool {
+        CLILoginLauncher.shared.isRunning(workspaceLoginKey(workspace))
+    }
+
+    func workspaceLoginKey(_ workspace: ChatGPTWorkspace) -> String {
+        "workspace:\(workspace.id)"
     }
 
     /// Says what the login actually produced.

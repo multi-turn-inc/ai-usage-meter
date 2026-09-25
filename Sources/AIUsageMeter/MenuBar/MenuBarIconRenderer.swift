@@ -8,10 +8,9 @@ enum MenuBarIconRenderer {
     static func render(appState: AppState, themeManager: ThemeManager, animationDate: Date = Date()) -> NSImage {
         // One cell per provider, not per account. With several logins per
         // provider the bar would otherwise grow without bound, so each cell
-        // shows that provider's most-constrained account — the one about to
-        // run out is what you need to see at a glance. The panel breaks the
-        // accounts out individually.
-        let services = mostConstrainedPerService(appState.services.filter { $0.config.isEnabled })
+        // shows the plan to use now — the one whose headroom you are about to
+        // spend. The panel breaks every plan out individually.
+        let services = ServiceType.allCases.compactMap { appState.menuBarRepresentative(for: $0) }
         guard !services.isEmpty else {
             // Show a placeholder icon when no services are enabled
             let img = NSImage(size: NSSize(width: 22, height: 22), flipped: false) { rect in
@@ -25,9 +24,7 @@ enum MenuBarIconRenderer {
 
         let serviceWidth: CGFloat = 38
         let spacing: CGFloat = 6
-        // Optional system-load meter cell after the services.
-        let showLoad = AppDefaults.userDefaults.object(forKey: "loadTabEnabled") as? Bool ?? true
-        let cellCount = services.count + (showLoad ? 1 : 0)
+        let cellCount = services.count
         let totalWidth = CGFloat(cellCount) * serviceWidth + CGFloat(cellCount - 1) * spacing
         let height: CGFloat = 22
 
@@ -49,10 +46,6 @@ enum MenuBarIconRenderer {
 
         let elapsed = animationDate.timeIntervalSinceReferenceDate
 
-        // Snapshot load values up front (render closure runs on the same actor).
-        let load = SystemLoadMonitor.shared
-        let loadSnapshot: (cpu: Double, gpu: Double, ram: Double)? = showLoad ? (load.cpu, load.gpu, load.ram) : nil
-
         let image = NSImage(size: NSSize(width: totalWidth, height: height), flipped: false) { _ in
             // `NSAppearance.current` is deprecated (macOS 12+); use the
             // drawing appearance active for this image draw pass instead.
@@ -68,48 +61,11 @@ enum MenuBarIconRenderer {
                 drawMeter(at: x, service: service, dark: dark, width: serviceWidth, height: height, elapsed: elapsed)
                 x += serviceWidth + spacing
             }
-            if let loadSnapshot {
-                drawLoadMeter(at: x, cpu: loadSnapshot.cpu, gpu: loadSnapshot.gpu, ram: loadSnapshot.ram,
-                              dark: dark, width: serviceWidth, height: height)
-            }
             return true
         }
 
         image.isTemplate = false
         return image
-    }
-
-    /// Picks, for each provider, the account with the least headroom left —
-    /// highest usage across its 5-hour and 7-day windows. Provider order stays
-    /// stable so the icon doesn't reshuffle between refreshes.
-    static func mostConstrainedPerService(_ services: [ServiceViewModel]) -> [ServiceViewModel] {
-        var byType: [ServiceType: ServiceViewModel] = [:]
-        for service in services {
-            let type = service.config.serviceType
-            // An explicit choice wins: the automatic "busiest account" rule is a
-            // reasonable default but it reassigns itself as usage moves, so the
-            // cell would silently start reporting a different login.
-            if let account = service.account, AccountRegistry.shared.isPinned(account) {
-                byType[type] = service
-                continue
-            }
-            guard let incumbent = byType[type] else {
-                byType[type] = service
-                continue
-            }
-            if let pinnedAccount = incumbent.account, AccountRegistry.shared.isPinned(pinnedAccount) {
-                continue
-            }
-            if pressure(of: service) > pressure(of: incumbent) {
-                byType[type] = service
-            }
-        }
-        return ServiceType.allCases.compactMap { byType[$0] }
-    }
-
-    private static func pressure(of service: ServiceViewModel) -> Double {
-        max(service.fiveHourUsage ?? service.usagePercentage,
-            service.sevenDayUsage ?? 0)
     }
 
     private struct ServiceSnapshot {
@@ -233,59 +189,6 @@ enum MenuBarIconRenderer {
         }
     }
 
-    /// System-load meter, same grammar as the service meters: horizontal fill = CPU,
-    /// bar height = GPU, color = RAM pressure (green→red).
-    private static func drawLoadMeter(
-        at x: CGFloat,
-        cpu: Double, gpu: Double, ram: Double,
-        dark: Bool,
-        width: CGFloat,
-        height: CGFloat
-    ) {
-        let color = SystemLoadMonitor.ramColor(ram).nsColor
-        let labelColor = dark ? NSColor.white : NSColor.black
-        let borderColor = dark ? NSColor.white.withAlphaComponent(0.55) : NSColor.black.withAlphaComponent(0.40)
-        let emptyBarColor = dark ? NSColor.white.withAlphaComponent(0.10) : NSColor.black.withAlphaComponent(0.10)
-
-        let cpuFrac = max(0, min(1, cpu / 100))
-        let gpuFrac = max(0, min(1, gpu / 100))
-
-        let labelAttrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 8, weight: .medium),
-            .foregroundColor: labelColor,
-        ]
-        let label = "Load"
-        let labelSize = label.size(withAttributes: labelAttrs)
-        NSAttributedString(string: label, attributes: labelAttrs)
-            .draw(at: NSPoint(x: x + (width - labelSize.width) / 2, y: height - 9))
-
-        let barCount = 10
-        let barAreaWidth = width - 4
-        let barWidth: CGFloat = (barAreaWidth - CGFloat(barCount - 1) * 1) / CGFloat(barCount)
-        let maxBarHeight: CGFloat = 10
-        let barY: CGFloat = 2
-        let barHeight = maxBarHeight * max(0.2, CGFloat(gpuFrac))   // GPU → height
-
-        let frameRect = NSRect(x: x + 1, y: barY - 1, width: barAreaWidth + 2, height: maxBarHeight + 2)
-        let framePath = NSBezierPath(roundedRect: frameRect, xRadius: 2, yRadius: 2)
-        NSColor.black.withAlphaComponent(0.28).setFill()
-        framePath.fill()
-        borderColor.setStroke()
-        framePath.lineWidth = 0.75
-        framePath.stroke()
-
-        for i in 0..<barCount {
-            let barX = x + 2 + CGFloat(i) * (barWidth + 1)
-            let fillRect = NSRect(x: barX, y: barY, width: barWidth, height: barHeight)
-            let barPosition = CGFloat(i + 1) / CGFloat(barCount)
-            if barPosition <= CGFloat(cpuFrac) + 0.05 {   // CPU → fill
-                color.setFill()
-            } else {
-                emptyBarColor.setFill()
-            }
-            NSBezierPath(rect: fillRect).fill()
-        }
-    }
 }
 
 extension Color {

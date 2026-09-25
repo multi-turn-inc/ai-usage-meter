@@ -40,6 +40,27 @@ final class AccountCredentialStore {
             return try? String(contentsOfFile: path, encoding: .utf8)
 
         case .keychain(let service, let item):
+            // A login this app created is renewed by this app alone, and our copy
+            // holds the result. The CLI's item beside it was written once, at
+            // sign-in, and still carries the refresh token our first renewal
+            // spent — re-adopting it, whether on a background read or an
+            // interactive one, is what killed these logins within a day. Only a
+            // newer write, the user signing in again, supersedes our copy;
+            // otherwise hand back our copy and let the caller renew it.
+            if account.isSelfManaged,
+               let copy = cache[account.id] ?? (try? keychain.retrieve(for: ownedKey(for: account))) {
+                cache[account.id] = copy
+                if let foreignWritten = AccountDiscovery.defaultKeychainModified(service, item),
+                   let ownWritten = ownedItemModified(account), foreignWritten > ownWritten,
+                   let fresh = allowImport
+                       ? readForeignKeychainItem(service: service, account: item)
+                       : readForeignKeychainItemSilently(service: service, account: item) {
+                    adopt(fresh, for: account)
+                    return fresh
+                }
+                return copy
+            }
+
             // Interactive path: re-read the source so our copy can't drift. The
             // owning app rotates these tokens, so a copy taken once and kept
             // forever eventually stops authenticating. This read may prompt the
@@ -119,6 +140,22 @@ final class AccountCredentialStore {
     }
 
     // MARK: - Internals
+
+    /// When our copy was last written. Attribute-only: never reads the secret.
+    private func ownedItemModified(_ account: ProviderAccount) -> Date? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "com.aiusagemeter",
+            kSecAttrAccount as String: ownedKey(for: account),
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var result: AnyObject?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let attributes = result as? [String: Any] else { return nil }
+        return (attributes[kSecAttrModificationDate as String] as? Date)
+            ?? (attributes[kSecAttrCreationDate as String] as? Date)
+    }
 
     /// Namespaced so an account's copy can never collide with other settings.
     private func ownedKey(for account: ProviderAccount) -> String {
