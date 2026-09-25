@@ -748,125 +748,13 @@ class LocalizationManager {
         }
     }
 
-    var ram: String {
-        switch currentLanguage {
-        case .english: return "RAM"
-        case .korean: return "메모리"
-        case .japanese: return "メモリ"
-        case .chinese: return "内存"
-        case .spanish: return "RAM"
-        case .french: return "RAM"
-        case .german: return "RAM"
-        case .portuguese: return "RAM"
-        case .russian: return "ОЗУ"
-        case .italian: return "RAM"
-        }
-    }
 
-    var topCPU: String {
-        switch currentLanguage {
-        case .english: return "Top CPU"
-        case .korean: return "CPU 상위"
-        case .japanese: return "CPU上位"
-        case .chinese: return "CPU 占用"
-        case .spanish: return "Mayor CPU"
-        case .french: return "Top CPU"
-        case .german: return "Top-CPU"
-        case .portuguese: return "Maior CPU"
-        case .russian: return "Топ CPU"
-        case .italian: return "Top CPU"
-        }
-    }
 
-    var topMemory: String {
-        switch currentLanguage {
-        case .english: return "Top Memory"
-        case .korean: return "메모리 상위"
-        case .japanese: return "メモリ上位"
-        case .chinese: return "内存占用"
-        case .spanish: return "Mayor memoria"
-        case .french: return "Top mémoire"
-        case .german: return "Top-Speicher"
-        case .portuguese: return "Maior memória"
-        case .russian: return "Топ памяти"
-        case .italian: return "Top memoria"
-        }
-    }
 
-    var openActivityMonitor: String {
-        switch currentLanguage {
-        case .english: return "Open Activity Monitor for details"
-        case .korean: return "활성 상태 보기에서 자세히 확인"
-        case .japanese: return "アクティビティモニタで詳細を確認"
-        case .chinese: return "在活动监视器中查看详情"
-        case .spanish: return "Abrir el Monitor de Actividad para más detalles"
-        case .french: return "Ouvrir le Moniteur d'activité pour plus de détails"
-        case .german: return "Aktivitätsanzeige für Details öffnen"
-        case .portuguese: return "Abrir o Monitor de Atividade para detalhes"
-        case .russian: return "Открыть Мониторинг системы для подробностей"
-        case .italian: return "Apri Monitoraggio Attività per i dettagli"
-        }
-    }
 
-    var loadTab: String {
-        switch currentLanguage {
-        case .english: return "System load tab"
-        case .korean: return "시스템 부하 탭"
-        case .japanese: return "システム負荷タブ"
-        case .chinese: return "系统负载标签"
-        case .spanish: return "Pestaña de carga del sistema"
-        case .french: return "Onglet de charge système"
-        case .german: return "System­last-Tab"
-        case .portuguese: return "Aba de carga do sistema"
-        case .russian: return "Вкладка нагрузки системы"
-        case .italian: return "Scheda carico di sistema"
-        }
-    }
 
-    var loadTabDesc: String {
-        switch currentLanguage {
-        case .english: return "Show a Load tab with CPU, GPU, and memory usage."
-        case .korean: return "CPU·GPU·메모리 사용량을 보는 부하 탭을 표시합니다."
-        case .japanese: return "CPU・GPU・メモリ使用量を見る負荷タブを表示します。"
-        case .chinese: return "显示包含 CPU、GPU 和内存使用量的负载标签。"
-        case .spanish: return "Muestra una pestaña de carga con uso de CPU, GPU y memoria."
-        case .french: return "Affiche un onglet de charge avec l'utilisation CPU, GPU et mémoire."
-        case .german: return "Zeigt einen Last-Tab mit CPU-, GPU- und Speichernutzung."
-        case .portuguese: return "Mostra uma aba de carga com uso de CPU, GPU e memória."
-        case .russian: return "Показывает вкладку нагрузки с использованием CPU, GPU и памяти."
-        case .italian: return "Mostra una scheda carico con uso di CPU, GPU e memoria."
-        }
-    }
 
-    var aiDiagnose: String {
-        switch currentLanguage {
-        case .english: return "Diagnose with AI"
-        case .korean: return "AI로 원인 진단"
-        case .japanese: return "AIで原因を診断"
-        case .chinese: return "用 AI 诊断原因"
-        case .spanish: return "Diagnosticar con IA"
-        case .french: return "Diagnostiquer avec l'IA"
-        case .german: return "Mit KI diagnostizieren"
-        case .portuguese: return "Diagnosticar com IA"
-        case .russian: return "Диагностика с ИИ"
-        case .italian: return "Diagnostica con l'IA"
-        }
-    }
 
-    var autoDiagnoseWhenHot: String {
-        switch currentLanguage {
-        case .english: return "Auto-diagnose when the Mac gets hot"
-        case .korean: return "뜨거워지면 자동으로 진단"
-        case .japanese: return "熱くなったら自動で診断"
-        case .chinese: return "变热时自动诊断"
-        case .spanish: return "Diagnosticar automáticamente cuando se caliente"
-        case .french: return "Diagnostiquer automatiquement en cas de surchauffe"
-        case .german: return "Bei Hitze automatisch diagnostizieren"
-        case .portuguese: return "Diagnosticar automaticamente quando esquentar"
-        case .russian: return "Автодиагностика при нагреве"
-        case .italian: return "Diagnostica automatica quando si surriscalda"
-        }
-    }
 
     var accounts: String {
         switch currentLanguage {
@@ -958,20 +846,6 @@ class LocalizationManager {
         }
     }
 
-    var invalidAPIKey: String {
-        switch currentLanguage {
-        case .english: return "Invalid API key"
-        case .korean: return "API 키가 올바르지 않습니다"
-        case .japanese: return "APIキーが正しくありません"
-        case .chinese: return "API 密钥无效"
-        case .spanish: return "Clave API no válida"
-        case .french: return "Clé API non valide"
-        case .german: return "Ungültiger API-Schlüssel"
-        case .portuguese: return "Chave de API inválida"
-        case .russian: return "Неверный API-ключ"
-        case .italian: return "Chiave API non valida"
-        }
-    }
 
     var save: String {
         switch currentLanguage {
@@ -988,80 +862,10 @@ class LocalizationManager {
         }
     }
 
-    var thermalAdvisor: String {
-        switch currentLanguage {
-        case .english: return "Heat Advisor"
-        case .korean: return "발열 어드바이저"
-        case .japanese: return "発熱アドバイザー"
-        case .chinese: return "发热顾问"
-        case .spanish: return "Asesor de calor"
-        case .french: return "Conseiller thermique"
-        case .german: return "Wärme-Berater"
-        case .portuguese: return "Consultor de calor"
-        case .russian: return "Тепловой советник"
-        case .italian: return "Consulente termico"
-        }
-    }
 
-    var thermalAdvisorEnable: String {
-        switch currentLanguage {
-        case .english: return "Diagnose overheating with AI"
-        case .korean: return "AI로 발열 원인 진단"
-        case .japanese: return "AIで発熱の原因を診断"
-        case .chinese: return "用 AI 诊断过热原因"
-        case .spanish: return "Diagnosticar el sobrecalentamiento con IA"
-        case .french: return "Diagnostiquer la surchauffe avec l'IA"
-        case .german: return "Überhitzung mit KI diagnostizieren"
-        case .portuguese: return "Diagnosticar superaquecimento com IA"
-        case .russian: return "Диагностика перегрева с помощью ИИ"
-        case .italian: return "Diagnostica il surriscaldamento con l'IA"
-        }
-    }
 
-    var thermalAdvisorPrivacy: String {
-        switch currentLanguage {
-        case .english: return "When the Mac gets hot, sends the names of top-CPU processes to Anthropic for a diagnosis. Uses your API key."
-        case .korean: return "맥이 뜨거워지면 CPU 상위 프로세스 이름을 Anthropic에 보내 진단합니다. 본인 API 키를 사용합니다."
-        case .japanese: return "Macが熱くなると、CPU上位プロセス名をAnthropicに送信して診断します。ご自身のAPIキーを使用します。"
-        case .chinese: return "当 Mac 变热时，将占用 CPU 最多的进程名称发送给 Anthropic 进行诊断。使用您的 API 密钥。"
-        case .spanish: return "Cuando el Mac se calienta, envía los nombres de los procesos con más CPU a Anthropic para un diagnóstico. Usa tu clave API."
-        case .french: return "Quand le Mac chauffe, envoie les noms des processus les plus gourmands en CPU à Anthropic pour un diagnostic. Utilise votre clé API."
-        case .german: return "Wenn der Mac heiß wird, werden die Namen der CPU-intensivsten Prozesse zur Diagnose an Anthropic gesendet. Nutzt deinen API-Schlüssel."
-        case .portuguese: return "Quando o Mac esquenta, envia os nomes dos processos com mais CPU para a Anthropic para diagnóstico. Usa sua chave de API."
-        case .russian: return "Когда Mac нагревается, отправляет имена процессов с наибольшей нагрузкой на CPU в Anthropic для диагностики. Использует ваш API-ключ."
-        case .italian: return "Quando il Mac si surriscalda, invia i nomi dei processi che usano più CPU ad Anthropic per una diagnosi. Usa la tua chiave API."
-        }
-    }
 
-    var anthropicKey: String {
-        switch currentLanguage {
-        case .english: return "Anthropic API key"
-        case .korean: return "Anthropic API 키"
-        case .japanese: return "Anthropic APIキー"
-        case .chinese: return "Anthropic API 密钥"
-        case .spanish: return "Clave API de Anthropic"
-        case .french: return "Clé API Anthropic"
-        case .german: return "Anthropic API-Schlüssel"
-        case .portuguese: return "Chave de API da Anthropic"
-        case .russian: return "API-ключ Anthropic"
-        case .italian: return "Chiave API Anthropic"
-        }
-    }
 
-    var thermalAdvisorNeedsKey: String {
-        switch currentLanguage {
-        case .english: return "Enter an API key to enable diagnosis."
-        case .korean: return "진단을 사용하려면 API 키를 입력하세요."
-        case .japanese: return "診断を有効にするにはAPIキーを入力してください。"
-        case .chinese: return "请输入 API 密钥以启用诊断。"
-        case .spanish: return "Introduce una clave API para activar el diagnóstico."
-        case .french: return "Saisissez une clé API pour activer le diagnostic."
-        case .german: return "Gib einen API-Schlüssel ein, um die Diagnose zu aktivieren."
-        case .portuguese: return "Insira uma chave de API para ativar o diagnóstico."
-        case .russian: return "Введите API-ключ, чтобы включить диагностику."
-        case .italian: return "Inserisci una chiave API per attivare la diagnosi."
-        }
-    }
 
     var diagnoseNow: String {
         switch currentLanguage {
@@ -1168,65 +972,9 @@ class LocalizationManager {
         }
     }
 
-    var loadHelpTitle: String {
-        switch currentLanguage {
-        case .english: return "System Load"
-        case .korean: return "시스템 부하"
-        case .japanese: return "システム負荷"
-        case .chinese: return "系统负载"
-        case .spanish: return "Carga del sistema"
-        case .french: return "Charge système"
-        case .german: return "System­last"
-        case .portuguese: return "Carga do sistema"
-        case .russian: return "Нагрузка системы"
-        case .italian: return "Carico di sistema"
-        }
-    }
 
-    var loadHelpBars: String {
-        switch currentLanguage {
-        case .english: return "CPU, GPU, and memory usage sampled while agents run."
-        case .korean: return "에이전트가 실행되는 동안 CPU, GPU, 메모리 사용량을 표시합니다."
-        case .japanese: return "エージェント実行中の CPU・GPU・メモリ使用量を表示します。"
-        case .chinese: return "显示代理运行时的 CPU、GPU 和内存使用量。"
-        case .spanish: return "Uso de CPU, GPU y memoria mientras los agentes se ejecutan."
-        case .french: return "Utilisation CPU, GPU et mémoire pendant l'exécution des agents."
-        case .german: return "CPU-, GPU- und Speichernutzung während Agenten laufen."
-        case .portuguese: return "Uso de CPU, GPU e memória enquanto os agentes rodam."
-        case .russian: return "Использование CPU, GPU и памяти во время работы агентов."
-        case .italian: return "Uso di CPU, GPU e memoria mentre gli agenti sono attivi."
-        }
-    }
 
-    var loadHelpColor: String {
-        switch currentLanguage {
-        case .english: return "Color shifts from cyan to magenta as memory pressure rises — cyan is comfortable, magenta is tight."
-        case .korean: return "색은 메모리 압박이 커질수록 청록에서 자홍으로 변합니다 — 청록은 여유, 자홍은 빡빡한 상태입니다."
-        case .japanese: return "メモリ圧が高まるとシアンからマゼンタへ色が変化します — シアンは余裕、マゼンタは逼迫です。"
-        case .chinese: return "内存压力越大,颜色从青色逐渐变为品红 — 青色表示宽松,品红表示紧张。"
-        case .spanish: return "El color va de cian a magenta según sube la presión de memoria — cian holgado, magenta ajustado."
-        case .french: return "La couleur passe du cyan au magenta à mesure que la pression mémoire augmente — cyan à l'aise, magenta serré."
-        case .german: return "Die Farbe wechselt bei steigendem Speicherdruck von Cyan zu Magenta — Cyan entspannt, Magenta angespannt."
-        case .portuguese: return "A cor vai de ciano a magenta conforme a pressão de memória sobe — ciano folgado, magenta apertado."
-        case .russian: return "Цвет меняется с бирюзового на пурпурный при росте нагрузки на память — бирюзовый — свободно, пурпурный — напряжённо."
-        case .italian: return "Il colore passa da ciano a magenta man mano che la pressione di memoria cresce — ciano tranquillo, magenta stretto."
-        }
-    }
 
-    var loadHelpDiagnose: String {
-        switch currentLanguage {
-        case .english: return "When your Mac gets hot, tap Diagnose with AI to ask Claude what's cooking (uses your own API key)."
-        case .korean: return "맥이 뜨거워지면 AI로 원인 진단을 눌러 Claude에게 원인을 물어볼 수 있습니다 (본인 API 키 사용)."
-        case .japanese: return "Mac が熱くなったら「AI で原因を診断」を押して Claude に原因を尋ねられます(自分の API キーを使用)。"
-        case .chinese: return "Mac 变热时,点击「用 AI 诊断」向 Claude 询问原因(使用你自己的 API 密钥)。"
-        case .spanish: return "Cuando tu Mac se caliente, pulsa Diagnosticar con IA para preguntar a Claude (usa tu propia clave API)."
-        case .french: return "Quand votre Mac chauffe, appuyez sur Diagnostiquer avec IA pour interroger Claude (avec votre propre clé API)."
-        case .german: return "Wenn dein Mac heiß wird, tippe auf „Mit KI diagnostizieren“, um Claude zu fragen (nutzt deinen eigenen API-Key)."
-        case .portuguese: return "Quando seu Mac esquentar, toque em Diagnosticar com IA para perguntar ao Claude (usa sua própria chave de API)."
-        case .russian: return "Когда Mac нагреется, нажмите «Диагностика ИИ», чтобы спросить Claude (использует ваш API-ключ)."
-        case .italian: return "Quando il Mac si scalda, tocca Diagnostica con IA per chiedere a Claude (usa la tua chiave API)."
-        }
-    }
 }
 
 // Global accessor

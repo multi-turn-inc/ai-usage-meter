@@ -144,6 +144,27 @@ final class AccountDiscoveryTests: XCTestCase {
         XCTAssertEqual(accounts.first?.source, .keychain(service: expected, account: NSUserName()))
     }
 
+    // The regression: current Claude Code writes the default login to the
+    // unscoped item when CLAUDE_CONFIG_DIR is unset. Reading only the item
+    // scoped to ~/.claude — frozen since a launcher last set the variable —
+    // showed the login the CLI was working in as expired.
+    func test_defaultAccount_followsTheUnscopedItemWhenItIsTheLiveOne() {
+        let home = makeHome([".claude.json": #"{"oauthAccount":{"emailAddress":"me@example.com"}}"#])
+        let scoped = AccountDiscovery.claudeScopedKeychainService(
+            forConfigDir: home.appendingPathComponent(".claude").path)
+        let unscoped = AccountDiscovery.claudeUnscopedKeychainService
+
+        let accounts = AccountDiscovery.discoverClaude(home: home, keychainModified: { service, _ in
+            switch service {
+            case scoped: return Date().addingTimeInterval(-50 * 86_400)
+            case unscoped: return Date().addingTimeInterval(-3600)
+            default: return nil
+            }
+        }, readsUnscopedItem: true)
+
+        XCTAssertEqual(accounts.first?.source, .keychain(service: unscoped, account: NSUserName()))
+    }
+
     func test_defaultAccount_keepsTheFileWhileItIsTheFresherStore() {
         let home = makeHome([".claude/.credentials.json": #"{"claudeAiOauth":{"accessToken":"live"}}"#])
         let credentials = home.appendingPathComponent(".claude/.credentials.json").path

@@ -6,13 +6,10 @@ struct ProviderAccount { let id: String }
 extension ServiceType {
     var brandColor: Color { Color(nsColor: self == .claude ? .systemOrange : .systemBlue) }
 }
-#if BASELINE
-extension MenuBarIconRenderer { static func displayedLoad(_ value: Double) -> Double { value } }
-#endif
 
 // These are intentionally small, deterministic stand-ins for the app model. The
 // production renderer is compiled into this executable; no app state, keychain,
-// credentials, network, or live load sampling is used.
+// credentials, network, or live sampling is used.
 struct ServiceConfig {
     let id: UUID
     var serviceType: ServiceType
@@ -37,6 +34,12 @@ struct ServiceConfig {
 @MainActor final class AppState {
     var services: [ServiceViewModel] = []
     var menuBarNeedsRedraw = 0
+
+    /// Mirrors the app: a pinned login wins, else the first enabled one.
+    func menuBarRepresentative(for service: ServiceType) -> ServiceViewModel? {
+        let logins = services.filter { $0.config.isEnabled && $0.config.serviceType == service }
+        return logins.first { $0.account.map(AccountRegistry.shared.isPinned) == true } ?? logins.first
+    }
 }
 
 @MainActor final class ThemeManager {
@@ -46,6 +49,17 @@ struct ServiceConfig {
 struct MenuBarTheme { }
 struct AppTheme { let menuBar: MenuBarTheme }
 
+@MainActor final class AccountRegistry {
+    static let shared = AccountRegistry(); private var pinned = Set<String>()
+    func isPinned(_ account: ProviderAccount) -> Bool { pinned.contains(account.id) }
+    func pin(_ account: ProviderAccount) { pinned.insert(account.id) }
+}
+
+#if BASELINE
+// The 36080fc renderer predates the pulse and still draws the load cell.
+extension MenuBarIconRenderer {
+    static func beat(for service: ServiceViewModel, at date: Date) -> Double { 0 }
+}
 @MainActor final class SystemLoadMonitor {
     static let shared = SystemLoadMonitor()
     var cpu = 31.0; var gpu = 17.0; var ram = 53.0
@@ -58,22 +72,21 @@ enum AppDefaults {
         return UserDefaults(suiteName: suiteName)!
     }()
 }
-@MainActor final class AccountRegistry {
-    static let shared = AccountRegistry(); private var pinned = Set<String>()
-    func isPinned(_ account: ProviderAccount) -> Bool { pinned.contains(account.id) }
-    func pin(_ account: ProviderAccount) { pinned.insert(account.id) }
-}
+#endif
 
 @MainActor final class RedrawHarness {
     let state = AppState(); let theme = ThemeManager(); var renders = 0
     private let gate = MenuBarRenderGate()
     func tick(force: Bool = false) {
-        guard gate.shouldRender(appState: state, themeManager: theme, force: force) else { return }
-        #if BASELINE
+        let now = Date()
+        guard gate.shouldRender(appState: state, themeManager: theme, at: now, force: force) else { return }
+        let image = MenuBarIconRenderer.render(appState: state, themeManager: theme, animationDate: now)
+        _ = image.tiffRepresentation
+        renders += 1
+    }
+    /// Every tick renders: what the old 12 Hz heartbeat timer did.
+    func renderUnconditionally() {
         let image = MenuBarIconRenderer.render(appState: state, themeManager: theme, animationDate: Date())
-        #else
-        let image = MenuBarIconRenderer.render(appState: state, themeManager: theme)
-        #endif
         _ = image.tiffRepresentation
         renders += 1
     }
@@ -83,55 +96,62 @@ enum AppDefaults {
     if !condition() { fputs("FAIL: \(message)\n", stderr); exit(1) }
 }
 
+@MainActor func run(seconds: TimeInterval, hertz: Double, _ body: () -> Void) {
+    let begin = CFAbsoluteTimeGetCurrent()
+    while CFAbsoluteTimeGetCurrent() - begin < seconds {
+        body()
+        RunLoop.current.run(until: Date().addingTimeInterval(1.0 / hertz))
+    }
+}
+
 @main struct Main {
     @MainActor static func main() {
-        defer { UserDefaults.standard.removePersistentDomain(forName: AppDefaults.suiteName) }
         let h = RedrawHarness(); let claude = ServiceViewModel(.claude); let codex = ServiceViewModel(.codex, usage: 65)
         h.state.services = [claude, codex]; h.tick(force: true)
-        let start = h.renders
-        let begin = CFAbsoluteTimeGetCurrent()
-        while CFAbsoluteTimeGetCurrent() - begin < 5 {
-            #if BASELINE
-            let image = MenuBarIconRenderer.render(appState: h.state, themeManager: h.theme, animationDate: Date())
-            _ = image.tiffRepresentation
-            h.renders += 1
-            #else
-            h.tick()
-            #endif
-            RunLoop.current.run(until: Date().addingTimeInterval(1.0 / 12.0))
-        }
-        let idle = h.renders - start
+
+        // Agents consuming for five seconds, at each version's own frame rate.
+        var start = h.renders
         #if BASELINE
-        check(idle > 20, "baseline heartbeat renders only \(idle) times")
+        run(seconds: 5, hertz: 12) { h.renderUnconditionally() }
         #else
-        check(idle == 0, "unchanged state redraws \(idle) times")
+        run(seconds: 5, hertz: 5) { h.tick() }
         #endif
+        let consuming = h.renders - start
+
+        // Nothing consuming, nothing changing: no frames at all.
+        claude.isConsuming = false; codex.isConsuming = false
+        h.tick(force: true)
+        start = h.renders
+        #if BASELINE
+        let idle = 0
+        #else
+        run(seconds: 2, hertz: 12) { h.tick() }
+        let idle = h.renders - start
+        check(idle == 0, "unchanged state redraws \(idle) times")
+        check(consuming > 0, "a consuming agent must still pulse")
+        #endif
+
+        #if !BASELINE
+        // Each input change draws exactly once.
         let eventBase = h.renders
         claude.usagePercentage += 1; claude.fiveHourUsage = claude.usagePercentage; h.tick(); check(h.renders == eventBase + 1, "usage change redraw")
         codex.config.isEnabled = false; h.tick(); check(h.renders == eventBase + 2, "disabled service redraw")
-        AppDefaults.userDefaults.set(false, forKey: "loadTabEnabled"); h.tick(); check(h.renders == eventBase + 3, "load toggle redraw")
-        h.theme.effectiveScheme = .dark; h.tick(); check(h.renders == eventBase + 4, "appearance redraw")
-        AppDefaults.userDefaults.set(true, forKey: "loadTabEnabled"); h.tick(); check(h.renders == eventBase + 5, "load re-enable redraw")
-        #if BASELINE
-        SystemLoadMonitor.shared.cpu = 31.4; h.tick(); check(h.renders == eventBase + 6, "baseline load redraw")
-        SystemLoadMonitor.shared.cpu = 32.0; h.tick(); check(h.renders == eventBase + 7, "baseline whole-percent redraw")
-        #else
-        SystemLoadMonitor.shared.cpu = 31.4; h.tick(); check(h.renders == eventBase + 5, "sub-percent load does not redraw")
-        SystemLoadMonitor.shared.cpu = 32.0; h.tick(); check(h.renders == eventBase + 6, "whole-percent load redraw")
-        #endif
-        codex.config.isEnabled = true
-        let alternate = ServiceViewModel(.codex, usage: 90)
-        h.state.services.append(alternate)
-        let beforePin = h.renders
+        h.theme.effectiveScheme = .dark; h.tick(); check(h.renders == eventBase + 3, "appearance redraw")
+        codex.config.isEnabled = true; h.tick(); check(h.renders == eventBase + 4, "re-enabled service redraw")
+        let alternate = ServiceViewModel(.codex, usage: 90, consuming: false)
+        h.state.services.insert(alternate, at: 0)
+        h.tick(); check(h.renders == eventBase + 5, "new representative redraw")
         AccountRegistry.shared.pin(ProviderAccount(id: codex.id.uuidString))
         codex.account = ProviderAccount(id: codex.id.uuidString)
-        h.tick()
-        check(h.renders == beforePin + 1, "pinned representative redraw")
+        h.state.menuBarNeedsRedraw += 1
+        h.tick(); check(h.renders == eventBase + 6, "pinned representative redraw")
+        #endif
+
         #if BASELINE
         let baseline = true
         #else
         let baseline = false
         #endif
-        print("PASS baseline=\(baseline) renders=\(h.renders) unchanged5s=\(idle) elapsed=\(String(format: "%.3f", CFAbsoluteTimeGetCurrent() - begin))s")
+        print("PASS baseline=\(baseline) consuming5s=\(consuming) idle=\(idle)")
     }
 }

@@ -3,6 +3,19 @@ import AIUsageMeterCore
 
 /// One quota window as the provider describes it, rather than a fixed 5h/7d pair.
 struct UsageWindow: Codable, Equatable, Identifiable {
+    /// What a window limits — the advisor needs to know which windows stop the
+    /// whole plan and which one holds its bulk.
+    enum Role: String, Codable {
+        /// Short rolling window (Claude's 5 hours).
+        case session
+        /// The long window; unused quota is lost when it resets.
+        case weekly
+        /// One model only — the rest of the plan keeps working.
+        case model
+        /// A credit allowance.
+        case spend
+    }
+
     /// Short display label: "5h", "7d", or a model name such as "Fable".
     let label: String
     /// 0–100 used.
@@ -10,8 +23,23 @@ struct UsageWindow: Codable, Equatable, Identifiable {
     let resetsAt: Date?
     /// The provider flagged this window as exhausted or near it.
     let isCritical: Bool
+    var role: Role = .weekly
+    /// Window length when known.
+    var windowSeconds: Double? = nil
 
     var id: String { label }
+
+    /// The same window in the advisor's terms.
+    var quotaLimit: QuotaLimit {
+        let kind: QuotaLimit.Kind
+        switch role {
+        case .session: kind = .session
+        case .weekly: kind = .weekly
+        case .model: kind = .model(label)
+        case .spend: kind = .spend
+        }
+        return QuotaLimit(kind: kind, usedPercent: percent, resetsAt: resetsAt, windowSeconds: windowSeconds)
+    }
 
     /// Derives "5h"/"7d"-style labels from a window duration, so a provider
     /// changing its window length can't leave the UI lying about the period.
@@ -55,6 +83,15 @@ struct UsageData: Codable, Equatable {
     /// hard-coded "5h"/"7d" fields. Those two remain for the gauge and menu-bar
     /// meter, which need one headline number.
     var windows: [UsageWindow] = []
+
+    /// Which plan these numbers belong to, from the credential rather than the
+    /// row's declared name. Two rows with the same `plan.key` are one plan.
+    var plan: PlanIdentity? = nil
+    /// The provider is refusing requests now, whatever the percentages say.
+    var limitReached: Bool = false
+    /// Every ChatGPT account this login can act in (Codex only). Lets the board
+    /// show workspaces that have no login of their own yet.
+    var workspaces: [ChatGPTWorkspace] = []
 
     var usagePercentage: Double {
         // Use 5-hour usage if available (Claude), otherwise calculate from tokens

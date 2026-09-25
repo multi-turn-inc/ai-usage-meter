@@ -16,11 +16,14 @@ class AppState {
     var activityDetectionEnabled: Bool = false
     var showMenuBarLegendOnboarding: Bool = false
     var tokenUsage: TokenUsageSummary = .empty
-    /// Which panel view to show, set by which menu-bar cell the user clicked.
-    var panelTab: PanelTab = .usage
     /// Bumped when something the icon depends on changes but the usage numbers
     /// don't — pinning a different representative account, for instance.
     var menuBarNeedsRedraw: Int = 0
+    /// Which plan to use now, per provider. See `PlanAdvisor`.
+    var recommendations: [ServiceType: PlanRecommendation] = [:]
+    /// Last pick per provider, so near-ties don't flip the advice every refresh.
+    var previousPicks: [ServiceType: String] = [:]
+    private var adviceTimer: Timer?
 
     private var refreshTimer: Timer?
     private var refreshInterval: TimeInterval = 300
@@ -35,6 +38,9 @@ class AppState {
     private var credentialFileWatchers: [any DispatchSourceFileSystemObject] = []
     private var credentialDirWatchers: [any DispatchSourceFileSystemObject] = []
     private var credentialRefreshDebounce: DispatchWorkItem?
+    /// Last seen modification date of each watched credentials file (nil when
+    /// absent), so a directory event that didn't touch one can be ignored.
+    private var credentialFileStamps: [String: Date?] = [:]
 
     var totalUsagePercentage: Double {
         guard !services.isEmpty else { return 0 }
@@ -64,11 +70,23 @@ class AppState {
 
         // If credential file is missing, the first refresh must be interactive
         // so Keychain access can restore it. Otherwise use non-interactive.
-        let needsInteractive = !KeychainManager.shared.hasCredentialFile()
+        // A render run is unattended: it must never raise a Keychain prompt.
+        let isRenderRun = Self.isRenderRun
+        let needsInteractive = !KeychainManager.shared.hasCredentialFile() && !isRenderRun
 
-        if !showMenuBarLegendOnboarding {
+        if (!showMenuBarLegendOnboarding || isRenderRun) && !Self.isFixtureRun {
             startRefreshWorkflowIfNeeded(interactive: needsInteractive)
         }
+    }
+
+    /// Unattended screenshot runs (`AIM_BLOG_RENDER`).
+    static var isRenderRun: Bool {
+        ProcessInfo.processInfo.environment["AIM_BLOG_RENDER"] != nil
+    }
+
+    /// Screenshot runs with made-up plans: nothing real is fetched.
+    static var isFixtureRun: Bool {
+        ProcessInfo.processInfo.environment["AIM_BLOG_RENDER_FIXTURE"] != nil
     }
 
     deinit {
@@ -204,6 +222,12 @@ class AppState {
             await refresh(interactive: interactive)
             startAutoRefreshTimer()
         }
+
+        // Resets happen between refreshes; re-judge every minute so the advice
+        // and the menu bar move on the moment a window refills.
+        adviceTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.updateAdvice() }
+        }
     }
 
     // MARK: - Credential File Watcher
@@ -211,12 +235,8 @@ class AppState {
     private func startCredentialFileWatcher() {
         stopCredentialFileWatcher()
 
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let filePaths = [
-            home.appendingPathComponent(".claude/.credentials.json").path,
-            home.appendingPathComponent(".config/claude/.credentials.json").path,
-            home.appendingPathComponent(".config/claude-code/.credentials.json").path
-        ]
+        let filePaths = Self.credentialFilePaths
+        credentialFileStamps = Self.credentialStamps()
 
         var watchedDirs = Set<String>()
 
@@ -284,7 +304,31 @@ class AppState {
         credentialDirWatchers.append(source)
     }
 
+    private static var credentialFilePaths: [String] {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return [
+            home.appendingPathComponent(".claude/.credentials.json").path,
+            home.appendingPathComponent(".config/claude/.credentials.json").path,
+            home.appendingPathComponent(".config/claude-code/.credentials.json").path
+        ]
+    }
+
+    private static func credentialStamps() -> [String: Date?] {
+        Dictionary(uniqueKeysWithValues: credentialFilePaths.map { path in
+            (path, (try? FileManager.default.attributesOfItem(atPath: path)[.modificationDate]) as? Date)
+        })
+    }
+
     private func onCredentialFileChanged() {
+        // A directory watcher fires on any entry change, and Claude Code
+        // rewrites history.jsonl in ~/.claude on every prompt. Each firing used
+        // to refetch every account — on a busy day, enough calls to lock
+        // accounts out of Anthropic's usage endpoint. Only a real change to a
+        // credentials file counts.
+        let stamps = Self.credentialStamps()
+        guard stamps != credentialFileStamps else { return }
+        credentialFileStamps = stamps
+
         credentialRefreshDebounce?.cancel()
         let work = DispatchWorkItem { [weak self] in
             print("🔄 Credential change detected → refreshing...")
@@ -347,6 +391,7 @@ class AppState {
             services[index].lastError = old.lastError
             services[index].hasLoaded = old.hasLoaded
         }
+        updateAdvice()
         // A reload that follows the user adding an account is interactive: this
         // is the one moment a Keychain prompt is expected, so the new row can
         // resolve immediately instead of sitting on "grant access".
@@ -426,11 +471,15 @@ class AppState {
             let name: String
             let client: AIServiceAPI
         }
+        // A second login into a plan whose first login is answering adds
+        // nothing but another request against the same rate limit.
+        let redundant = Set(planRows.filter { Self.isHealthy($0.login) }.flatMap { $0.otherLogins.map(\.id) })
         let jobs: [Job] = services.compactMap { service in
             guard service.config.isEnabled else {
                 print("⏭️ Skipping disabled service: \(service.name)")
                 return nil
             }
+            guard !redundant.contains(service.id) else { return nil }
             let label = service.accountLabel.map { "\(service.name) (\($0))" } ?? service.name
             print("📡 Fetching: \(label)")
             return Job(
@@ -442,9 +491,11 @@ class AppState {
             )
         }
 
-        let results: [(UUID, String, Result<UsageData, Error>)] = await withTaskGroup(
-            of: (UUID, String, Result<UsageData, Error>).self
-        ) { group in
+        // Results land as each account answers. Waiting for the whole group
+        // let one throttled account — sleeping out a retry — hold every other
+        // row on "loading" for a minute.
+        var errors: [String] = []
+        await withTaskGroup(of: (UUID, String, Result<UsageData, Error>).self) { group in
             for (position, job) in jobs.enumerated() {
                 group.addTask {
                     // Stagger the starts. Firing every account at once turned one
@@ -467,55 +518,17 @@ class AppState {
                 }
             }
 
-            var collected: [(UUID, String, Result<UsageData, Error>)] = []
-            for await result in group {
-                collected.append(result)
-            }
-            return collected
-        }
-
-        var errors: [String] = []
-        for (id, serviceName, result) in results {
-            // The row may have been removed while the request was in flight.
-            guard let index = services.firstIndex(where: { $0.id == id }) else { continue }
-            switch result {
-            case .success(let usage):
-                services[index].usage = usage
-                services[index].lastError = nil
-                services[index].hasLoaded = true
-                services[index].computeDelta()
-                print("📊 Updated \(serviceName): \(usage.usagePercentage)%")
-
-                let historyEntry = UsageHistoryEntry(
-                    serviceType: services[index].config.serviceType,
-                    fiveHourUsage: usage.fiveHourUsage,
-                    sevenDayUsage: usage.sevenDayUsage
-                )
-                UsageHistoryStore.shared.saveEntry(historyEntry)
-
-            case .failure(let error):
-                // Rate limit: keep previous data, don't show as error
-                if let apiError = error as? APIError,
-                   case .rateLimitExceeded = apiError {
-                    print("⏳ \(serviceName): rate limited, keeping previous data")
-                    // A row that has real numbers can quietly keep them. A row
-                    // that has never loaded cannot: staying silent left it
-                    // spinning "Updating…" forever with no hint why, which is
-                    // exactly the state a user reads as "broken".
-                    if services[index].hasLoaded {
-                        scheduleRateLimitRetry()
-                    } else {
-                        services[index].lastError = "요청이 많아 잠시 후 다시 시도합니다 (rate limit)"
-                        scheduleRateLimitRetry()
-                    }
-                } else {
-                    services[index].lastError = error.localizedDescription
-                    errors.append("\(serviceName): \(error.localizedDescription)")
+            for await (id, serviceName, result) in group {
+                if let error = apply(result, to: id, name: serviceName) {
+                    errors.append(error)
                 }
+                updateAdvice()
             }
         }
+
         lastRefreshDate = Date()
         errorMessage = errors.isEmpty ? nil : errors.joined(separator: "; ")
+        updateAdvice()
 
         requestTokenUsageRefresh()
 
@@ -553,6 +566,54 @@ class AppState {
             events: events.sorted { $0.timestamp < $1.timestamp },
             lastParsed: Date()
         )
+    }
+
+    /// Stores one account's result. Returns an error line for the summary, if any.
+    private func apply(_ result: Result<UsageData, Error>, to id: UUID, name serviceName: String) -> String? {
+        // The row may have been removed while the request was in flight.
+        guard let index = services.firstIndex(where: { $0.id == id }) else { return nil }
+        switch result {
+        case .success(let usage):
+            services[index].usage = usage
+            services[index].lastError = nil
+            services[index].hasLoaded = true
+            services[index].computeDelta()
+            print("📊 Updated \(serviceName): \(usage.usagePercentage)%")
+
+            let historyEntry = UsageHistoryEntry(
+                serviceType: services[index].config.serviceType,
+                fiveHourUsage: usage.fiveHourUsage,
+                sevenDayUsage: usage.sevenDayUsage
+            )
+            UsageHistoryStore.shared.saveEntry(historyEntry)
+            return nil
+
+        case .failure(let error):
+            // Rate limit: keep previous data, don't show as error
+            if let apiError = error as? APIError,
+               case .rateLimitExceeded(let until) = apiError {
+                print("⏳ \(serviceName): rate limited, keeping previous data")
+                // A row that has real numbers can quietly keep them. A row
+                // that has never loaded cannot: staying silent left it
+                // spinning "Updating…" forever with no hint why, which is
+                // exactly the state a user reads as "broken".
+                if !services[index].hasLoaded {
+                    let wait = until.map { Durations.compact($0.timeIntervalSinceNow) }
+                    services[index].lastError = wait.map { "요청 제한 — \($0) 뒤 다시 시도 (rate limit)" }
+                        ?? "요청이 많아 잠시 후 다시 시도합니다 (rate limit)"
+                }
+                // A short throttle is worth an early retry. A lockout the
+                // provider has timed is not: retrying every account every 75
+                // seconds for most of an hour buys nothing, and the regular
+                // refresh picks the account up once it lifts.
+                if until.map({ $0.timeIntervalSinceNow < 120 }) ?? true {
+                    scheduleRateLimitRetry()
+                }
+                return nil
+            }
+            services[index].lastError = error.localizedDescription
+            return "\(serviceName): \(error.localizedDescription)"
+        }
     }
 
     /// After a 429 on first load, retry well before the normal 5-min cycle so the
@@ -598,6 +659,9 @@ class ServiceViewModel: Identifiable {
 
     var fiveHourDelta: Double = 0
     var sevenDayDelta: Double = 0
+    /// When this login's usage was last seen to rise — the evidence that it is
+    /// the one being used.
+    var lastIncreaseAt: Date?
     var isConsuming: Bool = false
     var consumingDetectedAt: Date?
 
@@ -634,6 +698,9 @@ class ServiceViewModel: Identifiable {
         if let prevSeven = previousSevenDayUsage {
             let delta = currentSeven - prevSeven
             sevenDayDelta = delta > 0.1 ? delta : 0
+        }
+        if fiveHourDelta > 0 || sevenDayDelta > 0 {
+            lastIncreaseAt = Date()
         }
     }
 

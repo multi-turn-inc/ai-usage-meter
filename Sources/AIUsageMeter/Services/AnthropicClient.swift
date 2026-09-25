@@ -185,30 +185,76 @@ class AnthropicClient: BaseAPIClient, AIServiceAPI {
             )
         }
 
+        let expired = APIError.httpError(
+            statusCode: 401,
+            message: account.isSelfManaged
+                ? "\(account.label): 로그인이 만료되었습니다 — 다시 로그인해 주세요"
+                : "\(account.label): 토큰이 만료됨 — 해당 계정을 한 번 사용하면 자동 복구됩니다"
+        )
+        if account.isSelfManaged, await DeadLoginRegistry.shared.isDead(refreshToken: credentials.refreshToken) {
+            throw expired
+        }
+
         do {
-            return try await fetchOAuthUsage(accessToken: credentials.accessToken,
-                                             tier: credentials.rateLimitTier)
+            var usage = try await fetchOAuthUsage(accessToken: credentials.accessToken,
+                                                  tier: credentials.rateLimitTier)
+            usage.plan = await planIdentity(for: account, credentials: credentials)
+            return usage
         } catch let error as APIError {
             switch error {
             case .unauthorized, .httpError(401, _), .httpError(403, _):
                 // A login this app created has no other owner, so renewing it is
                 // both safe and the only thing that can renew it: no CLI ever runs
                 // in that config home, so the token would otherwise stay dead.
-                if account.isSelfManaged,
-                   let renewed = try? await renew(credentials, for: account) {
-                    return try await fetchOAuthUsage(accessToken: renewed.accessToken,
-                                                     tier: renewed.rateLimitTier)
+                if account.isSelfManaged {
+                    do {
+                        let renewed = try await renew(credentials, for: account)
+                        var usage = try await fetchOAuthUsage(accessToken: renewed.accessToken,
+                                                              tier: renewed.rateLimitTier)
+                        usage.plan = await planIdentity(for: account, credentials: renewed)
+                        return usage
+                    } catch TokenRefreshError.refreshFailed(let status, _) where (400...403).contains(status) {
+                        // Refused outright, not throttled: this token is spent.
+                        print("⚠️ \(account.label): refresh refused (\(status)) — needs a new sign-in")
+                        await DeadLoginRegistry.shared.markDead(refreshToken: credentials.refreshToken)
+                    } catch {
+                        // Throttled or unreachable — worth trying again later.
+                        print("⚠️ \(account.label): refresh failed: \(error)")
+                    }
                 }
-                throw APIError.httpError(
-                    statusCode: 401,
-                    message: account.isSelfManaged
-                        ? "\(account.label): 로그인이 만료되었습니다 — 다시 로그인해 주세요"
-                        : "\(account.label): 토큰이 만료됨 — 해당 계정을 한 번 사용하면 자동 복구됩니다"
-                )
+                throw expired
             default:
                 throw error
             }
         }
+    }
+
+    /// Which plan this token draws from.
+    ///
+    /// The profile call is the evidence: Claude tokens are opaque, and the name
+    /// in `.claude.json` beside them can belong to a different login. The
+    /// declared label is still used when it agrees with the evidence, because
+    /// only it carries a Team seat's own tier ("Team 5x" rather than "Team").
+    private func planIdentity(for account: ProviderAccount,
+                              credentials: ClaudeCodeCredentials) async -> PlanIdentity {
+        let profile = await ClaudeProfileCache.shared.profile(accessToken: credentials.accessToken)
+        let fromToken = PlanNames.claude(organizationType: credentials.subscriptionType,
+                                         rateLimitTier: credentials.rateLimitTier)
+        let evidenced = profile?.planName ?? fromToken
+        let planName: String?
+        if let declared = account.planName, let evidenced,
+           declared.split(separator: " ").first == evidenced.split(separator: " ").first {
+            planName = declared
+        } else {
+            planName = evidenced ?? account.planName
+        }
+        return PlanIdentity(
+            key: profile?.planKey,
+            personKey: profile?.accountUuid ?? account.personKey,
+            email: profile?.email ?? account.email,
+            orgName: AccountDiscovery.prettyOrgName(profile?.organizationName) ?? account.organizationName,
+            planName: planName
+        )
     }
 
     /// Refreshes a self-owned login and keeps the result.
@@ -230,6 +276,11 @@ class AnthropicClient: BaseAPIClient, AIServiceAPI {
             throw APIError.invalidURL
         }
 
+        let gateKey = account?.id ?? SHA256Fingerprint.of(accessToken)
+        if let until = await ClaudeRateLimitGate.shared.blocked(gateKey) {
+            throw APIError.rateLimitExceeded(resetDate: until)
+        }
+
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
@@ -246,12 +297,20 @@ class AnthropicClient: BaseAPIClient, AIServiceAPI {
 
         guard httpResponse.statusCode == 200 else {
             if httpResponse.statusCode == 429 {
+                // A long lockout is honoured, not retried into.
+                if let wait = parseRetryAfter(from: httpResponse), wait > 60 {
+                    let until = Date().addingTimeInterval(TimeInterval(wait))
+                    await ClaudeRateLimitGate.shared.block(gateKey, until: until)
+                    print("⏳ Rate limited for \(wait)s — not asking again until then")
+                    throw APIError.rateLimitExceeded(resetDate: until)
+                }
                 guard retryCount < 2 else {
                     throw APIError.rateLimitExceeded(resetDate: nil)
                 }
                 let raw = parseRetryAfter(from: httpResponse) ?? 10
                 let retryAfter = max(5, min(raw, 30))  // minimum 5s, maximum 30s
-                print("⏳ Rate limited, retrying after \(retryAfter)s (attempt \(retryCount + 1)/2)...")
+                let reason = String(data: data.prefix(200), encoding: .utf8) ?? ""
+                print("⏳ Rate limited (Retry-After \(raw)s), retrying after \(retryAfter)s (attempt \(retryCount + 1)/2): \(reason)")
                 try await Task.sleep(nanoseconds: UInt64(retryAfter) * 1_000_000_000)
                 return try await fetchOAuthUsage(accessToken: accessToken, tier: tier, retryCount: retryCount + 1)
             }
@@ -384,24 +443,37 @@ class AnthropicClient: BaseAPIClient, AIServiceAPI {
             return formatter.date(from: raw)
         }
 
+        let session: Double = 5 * 3600
+        let week: Double = 7 * 86_400
+
         if let limits = response.limits, !limits.isEmpty {
             return limits.compactMap { entry in
                 guard let percent = entry.percent else { return nil }
                 let label: String
+                let role: UsageWindow.Role
                 switch entry.kind {
-                case "session": label = "5h"
-                case "weekly_all": label = "7d"
+                case "session":
+                    label = "5h"
+                    role = .session
+                case "weekly_all":
+                    label = "7d"
+                    role = .weekly
                 default:
-                    // A scoped cap names the model it applies to.
+                    // A scoped cap names the model it applies to. Anything else
+                    // unrecognised is shown but not allowed to block the plan:
+                    // wrongly calling a plan "out" is worse than missing a cap.
                     label = entry.scope?.model?.displayName
                         ?? entry.scope?.model?.id
                         ?? (entry.group == "weekly" ? "7d" : entry.kind ?? "?")
+                    role = .model
                 }
                 return UsageWindow(
                     label: label,
                     percent: percent,
                     resetsAt: parseDate(entry.resetsAt),
-                    isCritical: entry.severity == "critical" || percent >= 100
+                    isCritical: entry.severity == "critical" || percent >= 100,
+                    role: role,
+                    windowSeconds: role == .session ? session : (entry.group == "weekly" || role == .weekly ? week : nil)
                 )
             }
         }
@@ -410,12 +482,14 @@ class AnthropicClient: BaseAPIClient, AIServiceAPI {
         if let five = response.fiveHour?.utilization {
             fallback.append(UsageWindow(label: "5h", percent: five,
                                         resetsAt: parseDate(response.fiveHour?.resetsAt),
-                                        isCritical: five >= 100))
+                                        isCritical: five >= 100,
+                                        role: .session, windowSeconds: session))
         }
         if let seven = response.sevenDay?.utilization {
             fallback.append(UsageWindow(label: "7d", percent: seven,
                                         resetsAt: parseDate(response.sevenDay?.resetsAt),
-                                        isCritical: seven >= 100))
+                                        isCritical: seven >= 100,
+                                        role: .weekly, windowSeconds: week))
         }
         return fallback
     }

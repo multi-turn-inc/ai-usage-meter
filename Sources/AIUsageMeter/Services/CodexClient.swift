@@ -30,14 +30,51 @@ class CodexClient: BaseAPIClient, AIServiceAPI {
     // MARK: - AIServiceAPI
 
     func fetchUsage() async throws -> UsageData {
-        // Try to read local session logs
+        // Local rollouts are written by whichever login ~/.codex holds. They say
+        // nothing about any other workspace — reading them for one showed the
+        // default workspace's numbers under another workspace's name.
+        let readsLocalLogs = account == nil || account?.isDefault == true
         var sessionStats = try await analyzeLocalSessions()
+        if !readsLocalLogs { sessionStats.dropRateLimits() }
 
-        if let remoteSnapshot = try? await fetchRemoteRateLimits() {
-            applyRemoteRateLimits(remoteSnapshot, to: &sessionStats, now: Date())
+        var authRoot = loadAuthJSON()
+        var snapshot: CodexUsageSnapshot?
+        do {
+            snapshot = try await fetchRemoteUsage(authRoot: authRoot)
+        } catch APIError.unauthorized {
+            // A login this app created has no other owner, so renewing it is
+            // safe — and nothing else ever will.
+            if let account, account.isSelfManaged, case .file(let path) = account.source,
+               let renewed = try? await CodexTokenRefresher.renew(authFile: URL(fileURLWithPath: path)) {
+                authRoot = renewed
+                snapshot = try? await fetchRemoteUsage(authRoot: renewed)
+            }
+            if snapshot == nil, !readsLocalLogs {
+                throw APIError.httpError(
+                    statusCode: 401,
+                    message: account?.isSelfManaged == true
+                        ? "\(account?.label ?? "Codex"): 로그인이 만료되었습니다 — 다시 로그인해 주세요"
+                        : "\(account?.label ?? "Codex"): 토큰이 만료됨 — 해당 계정을 한 번 사용하면 자동 복구됩니다"
+                )
+            }
+        } catch {
+            // The CLI's own login can fall back on what its rollouts recorded;
+            // any other login has nothing else to go on.
+            if !readsLocalLogs { throw error }
         }
 
-        return UsageData(
+        if let snapshot {
+            applyRemoteRateLimits(RemoteRateLimitSnapshot(snapshot), to: &sessionStats, now: Date())
+        }
+
+        let identity = authRoot.flatMap(CodexTokenIdentity.from(authJSON:))
+        var workspaces: [ChatGPTWorkspace] = []
+        if let userId = identity?.userId, let token = accessToken(in: authRoot) {
+            workspaces = await ChatGPTDirectoryCache.shared.workspaces(userId: userId, accessToken: token)
+        }
+        let workspace = workspaces.first { $0.id == identity?.workspaceId }
+
+        var usage = UsageData(
             tokensUsed: sessionStats.totalTokens,
             tokensLimit: sessionStats.estimatedLimit,
             inputTokens: sessionStats.inputTokens,
@@ -53,36 +90,81 @@ class CodexClient: BaseAPIClient, AIServiceAPI {
             lastUpdated: Date(),
             fiveHourUsage: sessionStats.fiveHourUsagePercent,
             sevenDayUsage: sessionStats.sevenDayUsagePercent,
-            windows: Self.windows(from: sessionStats)
+            windows: snapshot.map(Self.windows(from:)) ?? Self.windows(from: sessionStats)
         )
+        usage.limitReached = snapshot?.limitReached ?? false
+        usage.workspaces = workspaces
+        usage.plan = PlanIdentity(
+            key: identity?.planKey,
+            personKey: identity?.userId ?? account?.personKey,
+            email: identity?.email ?? account?.email,
+            orgName: workspace?.displayName ?? account?.organizationName,
+            planName: PlanNames.chatGPT(planType: snapshot?.planType ?? identity?.planType)
+                ?? workspace?.planName ?? account?.planName
+        )
+        return usage
     }
 
-    /// Labels each window by the duration the backend actually reports.
+    /// Windows as the backend reports them, each labelled by its real length.
     ///
-    /// OpenAI changed this under us: the primary window used to be 5 hours and
-    /// is now weekly (604800s), with no secondary window at all. Hard-coding
-    /// "5h"/"7d" would have kept the old labels on the new data — a weekly
-    /// number displayed as a 5-hour one — so the period is always derived.
+    /// OpenAI changed this under us before: the primary window used to be five
+    /// hours and is now weekly, with no secondary at all. The credit allowance
+    /// is a separate limit and is shown as one — it can run out while most of
+    /// the rate limit is left.
+    private static func windows(from snapshot: CodexUsageSnapshot) -> [UsageWindow] {
+        var windows: [UsageWindow] = []
+        let rated = [(snapshot.primary, true), (snapshot.secondary, false)]
+        for case let (window?, isPrimary) in rated {
+            let seconds = window.windowSeconds
+            let role: UsageWindow.Role = seconds.map { $0 >= 86_400 ? .weekly : .session }
+                ?? (isPrimary && snapshot.secondary != nil ? .session : .weekly)
+            windows.append(UsageWindow(
+                label: seconds.map { UsageWindow.label(forSeconds: Int($0)) } ?? "—",
+                percent: window.usedPercent,
+                resetsAt: window.resetsAt,
+                isCritical: window.usedPercent >= 100,
+                role: role,
+                windowSeconds: seconds
+            ))
+        }
+        if let spend = snapshot.spend {
+            windows.append(UsageWindow(
+                label: "credits",
+                percent: spend.usedPercent,
+                resetsAt: spend.resetsAt,
+                isCritical: spend.usedPercent >= 100,
+                role: .spend,
+                windowSeconds: spend.windowSeconds
+            ))
+        }
+        return windows
+    }
+
+    /// Windows recovered from local rollouts, when the backend couldn't be
+    /// reached. Labels come from the reported lengths; an unknown length is
+    /// labelled as unknown rather than asserting "5h" over a weekly number.
     private static func windows(from stats: SessionStats) -> [UsageWindow] {
         var windows: [UsageWindow] = []
         if let percent = stats.fiveHourUsagePercent {
-            // No invented period: an unknown window is labelled as unknown rather
-            // than asserting "5h" over what may be a weekly number.
-            let label = stats.primaryWindowMinutes.map { UsageWindow.label(forSeconds: $0 * 60) } ?? "—"
+            let minutes = stats.primaryWindowMinutes
             windows.append(UsageWindow(
-                label: label,
+                label: minutes.map { UsageWindow.label(forSeconds: $0 * 60) } ?? "—",
                 percent: percent,
                 resetsAt: stats.resetDate,
-                isCritical: percent >= 100
+                isCritical: percent >= 100,
+                role: (minutes ?? 0) >= 1440 ? .weekly : .session,
+                windowSeconds: minutes.map { Double($0 * 60) }
             ))
         }
         if let percent = stats.sevenDayUsagePercent {
-            let label = stats.secondaryWindowMinutes.map { UsageWindow.label(forSeconds: $0 * 60) } ?? "—"
+            let minutes = stats.secondaryWindowMinutes
             windows.append(UsageWindow(
-                label: label,
+                label: minutes.map { UsageWindow.label(forSeconds: $0 * 60) } ?? "—",
                 percent: percent,
                 resetsAt: stats.sevenDayResetDate,
-                isCritical: percent >= 100
+                isCritical: percent >= 100,
+                role: .weekly,
+                windowSeconds: minutes.map { Double($0 * 60) }
             ))
         }
         return windows
@@ -109,6 +191,15 @@ class CodexClient: BaseAPIClient, AIServiceAPI {
         /// so labels are derived from them rather than assumed.
         var primaryWindowMinutes: Int?
         var secondaryWindowMinutes: Int?
+
+        /// Forgets limits read from local rollouts, which belong to another login.
+        mutating func dropRateLimits() {
+            fiveHourUsagePercent = nil
+            sevenDayUsagePercent = nil
+            primaryWindowMinutes = nil
+            secondaryWindowMinutes = nil
+            tier = "Codex"
+        }
     }
 
     private struct RemoteRateLimitSnapshot {
@@ -119,64 +210,15 @@ class CodexClient: BaseAPIClient, AIServiceAPI {
         var primaryResetTime: Date?
         var secondaryResetTime: Date?
         var planType: String?
-    }
 
-    private struct RateLimitStatusPayload: Decodable {
-        let planType: String?
-        let rateLimit: RateLimitContainer?
-
-        enum CodingKeys: String, CodingKey {
-            case planType = "plan_type"
-            case rateLimit = "rate_limit"
-        }
-    }
-
-    private struct RateLimitContainer: Decodable {
-        let primaryWindow: RateLimitWindow?
-        let secondaryWindow: RateLimitWindow?
-
-        enum CodingKeys: String, CodingKey {
-            case primaryWindow = "primary_window"
-            case secondaryWindow = "secondary_window"
-        }
-    }
-
-    private struct RateLimitWindow: Decodable {
-        let usedPercent: Double?
-        let resetAt: TimeInterval?
-        let limitWindowSeconds: Int?
-
-        enum CodingKeys: String, CodingKey {
-            case usedPercent = "used_percent"
-            case resetAt = "reset_at"
-            case limitWindowSeconds = "limit_window_seconds"
-        }
-
-        init(from decoder: Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
-            usedPercent = Self.decodeDouble(from: container, forKey: .usedPercent)
-            resetAt = Self.decodeDouble(from: container, forKey: .resetAt)
-            limitWindowSeconds = Self.decodeInt(from: container, forKey: .limitWindowSeconds)
-        }
-
-        private static func decodeDouble(from container: KeyedDecodingContainer<CodingKeys>, forKey key: CodingKeys) -> Double? {
-            if let value = try? container.decode(Double.self, forKey: key) {
-                return value
-            }
-            if let value = try? container.decode(Int.self, forKey: key) {
-                return Double(value)
-            }
-            return nil
-        }
-
-        private static func decodeInt(from container: KeyedDecodingContainer<CodingKeys>, forKey key: CodingKeys) -> Int? {
-            if let value = try? container.decode(Int.self, forKey: key) {
-                return value
-            }
-            if let value = try? container.decode(Double.self, forKey: key) {
-                return Int(value)
-            }
-            return nil
+        init(_ snapshot: CodexUsageSnapshot) {
+            primaryUsedPercent = snapshot.primary?.usedPercent
+            secondaryUsedPercent = snapshot.secondary?.usedPercent
+            primaryWindowMinutes = snapshot.primary?.windowSeconds.map { Int($0) / 60 }
+            secondaryWindowMinutes = snapshot.secondary?.windowSeconds.map { Int($0) / 60 }
+            primaryResetTime = snapshot.primary?.resetsAt
+            secondaryResetTime = snapshot.secondary?.resetsAt
+            planType = snapshot.planType
         }
     }
 
@@ -299,8 +341,13 @@ class CodexClient: BaseAPIClient, AIServiceAPI {
         let chatGPTAccountId: String?
     }
 
-    private func fetchRemoteRateLimits() async throws -> RemoteRateLimitSnapshot? {
-        guard let authInfo = loadCodexAuthInfo() else {
+    /// Reads this login's usage from the backend.
+    ///
+    /// The token decides which workspace answers: the backend ignores a
+    /// `ChatGPT-Account-Id` naming any other workspace and reports the token's
+    /// own. The header is still sent because the CLI sends it.
+    private func fetchRemoteUsage(authRoot: [String: Any]?) async throws -> CodexUsageSnapshot? {
+        guard let authInfo = authRoot.flatMap(codexAuthInfo(from:)) else {
             return nil
         }
 
@@ -315,15 +362,12 @@ class CodexClient: BaseAPIClient, AIServiceAPI {
                         "Accept": "application/json",
                         "User-Agent": "AIUsageMeter/1.0"
                     ]
-                    // One ChatGPT login can own several workspaces that bill
-                    // separately; without this header the backend answers for
-                    // the default one and every workspace looks identical.
-                    if let workspace = account?.chatGPTAccountId ?? authInfo.chatGPTAccountId {
+                    if let workspace = authInfo.chatGPTAccountId ?? account?.chatGPTAccountId {
                         headers["ChatGPT-Account-Id"] = workspace
                     }
                     let (data, _) = try await performRequest(url: endpoint, headers: headers)
 
-                    if let snapshot = decodeRateLimitSnapshot(from: data) {
+                    if let snapshot = CodexUsageSnapshot.parse(data) {
                         return snapshot
                     }
                 } catch let error as APIError {
@@ -342,30 +386,6 @@ class CodexClient: BaseAPIClient, AIServiceAPI {
         }
 
         return nil
-    }
-
-    private func decodeRateLimitSnapshot(from data: Data) -> RemoteRateLimitSnapshot? {
-        let decoder = JSONDecoder()
-        guard let payload = try? decoder.decode(RateLimitStatusPayload.self, from: data) else {
-            return nil
-        }
-
-        guard let rateLimit = payload.rateLimit else {
-            return nil
-        }
-
-        let primaryWindowMinutes = rateLimit.primaryWindow?.limitWindowSeconds.map { $0 / 60 }
-        let secondaryWindowMinutes = rateLimit.secondaryWindow?.limitWindowSeconds.map { $0 / 60 }
-
-        return RemoteRateLimitSnapshot(
-            primaryUsedPercent: rateLimit.primaryWindow?.usedPercent,
-            secondaryUsedPercent: rateLimit.secondaryWindow?.usedPercent,
-            primaryWindowMinutes: primaryWindowMinutes,
-            secondaryWindowMinutes: secondaryWindowMinutes,
-            primaryResetTime: rateLimit.primaryWindow?.resetAt.map { Date(timeIntervalSince1970: $0) },
-            secondaryResetTime: rateLimit.secondaryWindow?.resetAt.map { Date(timeIntervalSince1970: $0) },
-            planType: payload.planType
-        )
     }
 
     private func applyRemoteRateLimits(_ snapshot: RemoteRateLimitSnapshot, to stats: inout SessionStats, now: Date) {
@@ -404,29 +424,29 @@ class CodexClient: BaseAPIClient, AIServiceAPI {
         }
     }
 
-    private func loadCodexAuthInfo() -> CodexAuthInfo? {
+    private func loadAuthJSON() -> [String: Any]? {
         let authPath = "\(codexHome)/auth.json"
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: authPath)) else {
             return nil
         }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
 
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return nil
+    private func accessToken(in json: [String: Any]?) -> String? {
+        guard let json else { return nil }
+        if let tokens = json["tokens"] as? [String: Any],
+           let token = tokens["access_token"] as? String, !token.isEmpty {
+            return token
         }
+        let token = (json["access_token"] as? String)
+            ?? (json["accessToken"] as? String)
+            ?? (json["token"] as? String)
+            ?? (json["OPENAI_API_KEY"] as? String)
+        return token.flatMap { $0.isEmpty ? nil : $0 }
+    }
 
-        var accessToken: String?
-        if let tokens = json["tokens"] as? [String: Any] {
-            accessToken = tokens["access_token"] as? String
-        }
-
-        if accessToken == nil {
-            accessToken = (json["access_token"] as? String)
-                ?? (json["accessToken"] as? String)
-                ?? (json["token"] as? String)
-                ?? (json["OPENAI_API_KEY"] as? String)
-        }
-
-        guard let token = accessToken, !token.isEmpty else {
+    private func codexAuthInfo(from json: [String: Any]) -> CodexAuthInfo? {
+        guard let token = accessToken(in: json) else {
             return nil
         }
 
@@ -469,7 +489,9 @@ class CodexClient: BaseAPIClient, AIServiceAPI {
             }
         }
 
-        let defaults = ["https://api.openai.com", "https://chatgpt.com"]
+        // chatgpt.com is the host that answers; trying api.openai.com first cost
+        // two failed requests per account on every refresh.
+        let defaults = ["https://chatgpt.com", "https://api.openai.com"]
         for base in defaults {
             if let url = URL(string: base), !seen.contains(url.absoluteString) {
                 candidates.append(url)

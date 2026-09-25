@@ -25,9 +25,11 @@ git -C "$repo" show 36080fc:Sources/AIUsageMeter/MenuBar/MenuBarIconRenderer.swi
 run_case baseline BASELINE "$baseline"
 run_case fixed FIXED "$repo/Sources/AIUsageMeter/MenuBar/MenuBarIconRenderer.swift"
 
-baseline_count=$(sed -n 's/.*renders=\([0-9][0-9]*\).*/\1/p' "$work/baseline.log")
-fixed_count=$(sed -n 's/.*renders=\([0-9][0-9]*\).*/\1/p' "$work/fixed.log")
+baseline_count=$(sed -n 's/.*consuming5s=\([0-9][0-9]*\).*/\1/p' "$work/baseline.log")
+fixed_count=$(sed -n 's/.*consuming5s=\([0-9][0-9]*\).*/\1/p' "$work/fixed.log")
 [[ -n "$baseline_count" && -n "$fixed_count" ]] || { echo "FAIL: missing render counts" >&2; exit 1; }
-(( baseline_count > 20 )) || { echo "FAIL: baseline renders=$baseline_count (expected >20)" >&2; exit 1; }
-(( fixed_count <= 8 )) || { echo "FAIL: fixed renders=$fixed_count (expected <=8)" >&2; exit 1; }
-echo "PASS menu-bar regression baseline_renders=$baseline_count fixed_renders=$fixed_count"
+# The old heartbeat redrew at 12 Hz; the pulse ticks at 5 Hz and skips
+# identical frames, so it must stay well under half of that.
+(( baseline_count > 40 )) || { echo "FAIL: baseline renders=$baseline_count (expected >40)" >&2; exit 1; }
+(( fixed_count * 2 < baseline_count )) || { echo "FAIL: pulse renders=$fixed_count vs baseline $baseline_count" >&2; exit 1; }
+echo "PASS menu-bar regression baseline_consuming_renders=$baseline_count pulse_consuming_renders=$fixed_count"

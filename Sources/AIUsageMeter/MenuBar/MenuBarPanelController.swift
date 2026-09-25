@@ -14,7 +14,8 @@ final class MenuBarPanelController: NSObject, NSWindowDelegate {
     private var globalEventMonitor: EventMonitor?
     private var appearanceObservation: NSKeyValueObservation?
     private var defaultsObserver: NSObjectProtocol?
-    private var loadTimer: Timer?
+    /// Ticks at 5 Hz only while an agent is consuming, to pulse its cell.
+    private var animationTimer: Timer?
     private let renderGate = MenuBarRenderGate()
 
     init(title: String, appState: AppState, themeManager: ThemeManager) {
@@ -84,31 +85,15 @@ final class MenuBarPanelController: NSObject, NSWindowDelegate {
         localEventMonitor?.start()
 
         startIconObservationLoop()
-        startLoadMeterTimer()
+        syncAnimationTimer()
 
         autoOpenMenuBarLegendPanelIfNeeded()
     }
 
     deinit {
-        loadTimer?.invalidate()
+        animationTimer?.invalidate()
         if let defaultsObserver { NotificationCenter.default.removeObserver(defaultsObserver) }
         NSStatusBar.system.removeStatusItem(statusItem)
-    }
-
-    /// Samples system load and refreshes the menu-bar icon on a steady cadence so
-    /// the load meter stays live even when the panel is closed. Sampling is cheap
-    /// (in-process syscalls) and the icon redraw is a tiny image.
-    private func startLoadMeterTimer() {
-        SystemLoadMonitor.shared.sample()
-        let timer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                guard AppDefaults.userDefaults.object(forKey: "loadTabEnabled") as? Bool ?? true else { return }
-                SystemLoadMonitor.shared.sample()
-                self?.updateStatusItemImageIfNeeded()
-            }
-        }
-        timer.tolerance = 0.3
-        loadTimer = timer
     }
 
     private func startIconObservationLoop() {
@@ -137,52 +122,51 @@ final class MenuBarPanelController: NSObject, NSWindowDelegate {
     /// snapshot to avoid redundant icon renders.
     private func onObservedStateChanged() {
         updateStatusItemImageIfNeeded()
+        syncAnimationTimer()
 
         startIconObservationLoop()
     }
 
     private func updateStatusItemImageIfNeeded(force: Bool = false) {
-        guard renderGate.shouldRender(appState: appState, themeManager: themeManager, force: force) else { return }
-        let image = MenuBarIconRenderer.render(appState: appState, themeManager: themeManager)
+        let now = Date()
+        guard renderGate.shouldRender(appState: appState, themeManager: themeManager,
+                                      at: now, force: force) else { return }
+        let image = MenuBarIconRenderer.render(appState: appState, themeManager: themeManager,
+                                               animationDate: now)
         statusItem.button?.image = image
         statusItem.button?.title = ""
         statusItem.button?.imagePosition = .imageOnly
     }
 
-    private func didPressStatusBarButton(_ sender: NSStatusBarButton) {
-        let clickedTab = tabForClick(on: sender)
-
-        if window.isVisible {
-            // Clicking a different cell switches the view; same cell dismisses.
-            if clickedTab != appState.panelTab {
-                appState.panelTab = clickedTab
-            } else {
-                dismissWindow()
+    /// Runs the pulse only while some cell's agent is consuming. Ticks go
+    /// through the render gate, so frames between beats cost nothing.
+    private func syncAnimationTimer() {
+        let consuming = ServiceType.allCases.contains {
+            appState.menuBarRepresentative(for: $0)?.isConsuming == true
+        }
+        if consuming, animationTimer == nil {
+            let timer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
+                Task { @MainActor in self?.updateStatusItemImageIfNeeded() }
             }
+            timer.tolerance = 0.05
+            animationTimer = timer
+        } else if !consuming, let timer = animationTimer {
+            timer.invalidate()
+            animationTimer = nil
+            updateStatusItemImageIfNeeded()
+        }
+    }
+
+    private func didPressStatusBarButton(_ sender: NSStatusBarButton) {
+        if window.isVisible {
+            dismissWindow()
             return
         }
 
-        appState.panelTab = clickedTab
         setWindowPosition()
 
         DistributedNotificationCenter.default().post(name: .beginMenuTracking, object: nil)
         window.makeKeyAndOrderFront(nil)
-    }
-
-    /// Maps the click's horizontal position within the status item to a cell:
-    /// the last cell is the Load meter (when enabled), the rest are services.
-    private func tabForClick(on button: NSStatusBarButton) -> PanelTab {
-        let loadEnabled = AppDefaults.userDefaults.object(forKey: "loadTabEnabled") as? Bool ?? true
-        guard loadEnabled else { return .usage }
-
-        let serviceCount = appState.services.filter { $0.config.isEnabled }.count
-        let cellCount = serviceCount + 1   // + Load cell
-        guard cellCount > 1, let win = button.window else { return .usage }
-
-        let fraction = (NSEvent.mouseLocation.x - win.frame.minX) / max(win.frame.width, 1)
-        let index = Int(fraction * CGFloat(cellCount))
-        // Load is the last cell.
-        return index >= cellCount - 1 ? .load : .usage
     }
 
     func windowDidBecomeKey(_ notification: Notification) {

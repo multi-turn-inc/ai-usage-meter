@@ -448,7 +448,7 @@ extension KeychainManager {
                 }
                 seenRefreshToken = true
 
-                let tokenURL = URL(string: "https://console.anthropic.com/v1/oauth/token")!
+                let tokenURL = URL(string: "https://platform.claude.com/v1/oauth/token")!
 
                 let fullScopes = "user:inference user:profile user:sessions:claude_code"
                 let existingScopes = record.credentials.scopes?.joined(separator: " ") ?? "user:inference"

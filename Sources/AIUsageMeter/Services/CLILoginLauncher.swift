@@ -30,8 +30,9 @@ final class CLILoginLauncher {
 
     /// Starts the browser login. Returns immediately; completion arrives via
     /// `onFinished` once the CLI exits.
-    func login(service: ServiceType, account: ProviderAccount?, onFinished: @escaping () -> Void) {
-        let key = account?.id ?? "default:\(service.rawValue)"
+    func login(service: ServiceType, account: ProviderAccount?, forcedWorkspace: String? = nil,
+               onFinished: @escaping () -> Void) {
+        let key = forcedWorkspace.map { "workspace:\($0)" } ?? account?.id ?? "default:\(service.rawValue)"
         guard !inFlight.contains(key) else { return }
 
         guard let executable = Self.locateCLI(for: service) else {
@@ -41,7 +42,8 @@ final class CLILoginLauncher {
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = Self.loginArguments(for: service, account: account)
+        process.arguments = Self.loginArguments(for: service, account: account,
+                                                forcedWorkspace: forcedWorkspace)
 
         var environment = ProcessInfo.processInfo.environment
         // Point the CLI at *this* account's home so a multi-account machine
@@ -119,7 +121,12 @@ final class CLILoginLauncher {
     /// The email is pre-filled when known: on a machine with several logins the
     /// easiest mistake is re-authenticating the wrong one, which would overwrite
     /// a working account's credentials with a different identity.
-    static func loginArguments(for service: ServiceType, account: ProviderAccount?) -> [String] {
+    ///
+    /// A forced workspace makes Codex issue the token inside that workspace
+    /// (`forced_chatgpt_workspace_id`), so a login can be made for a specific
+    /// workspace rather than whichever one the browser picks.
+    static func loginArguments(for service: ServiceType, account: ProviderAccount?,
+                               forcedWorkspace: String? = nil) -> [String] {
         switch service {
         case .claude:
             var args = ["auth", "login", "--claudeai"]
@@ -128,7 +135,8 @@ final class CLILoginLauncher {
             }
             return args
         case .codex:
-            return ["login"]
+            guard let forcedWorkspace else { return ["login"] }
+            return ["login", "-c", "forced_chatgpt_workspace_id=\"\(forcedWorkspace)\""]
         case .gemini:
             return []
         }

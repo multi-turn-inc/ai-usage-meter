@@ -6,7 +6,17 @@ struct UsageBar: View {
     let resetText: String?
     let color: Color
 
-    @State private var animatedPercentage: Double = 0
+    @State private var animatedPercentage: Double
+
+    init(label: String, percentage: Double, resetText: String?, color: Color) {
+        self.label = label
+        self.percentage = percentage
+        self.resetText = resetText
+        self.color = color
+        // Bars fill from zero on screen; a snapshot is taken before any
+        // animation runs, so it starts at the final value instead.
+        _animatedPercentage = State(initialValue: AppState.isRenderRun ? percentage : 0)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {

@@ -8,7 +8,6 @@ struct SettingsPanel: View {
 
     @State private var appeared = false
     @State private var showBugReport = false
-    @State private var apiKeyDraft: String = ""
 
     var body: some View {
         if showBugReport {
@@ -225,11 +224,6 @@ struct SettingsPanel: View {
                         .premiumCard()
                     }
 
-                    // MARK: - Thermal Advisor
-                    settingsSection(title: L.thermalAdvisor, delay: 0.15) {
-                        thermalAdvisorCard
-                    }
-
                     // MARK: - Support
                     settingsSection(title: L.support, delay: 0.18) {
                         VStack(spacing: 0) {
@@ -279,75 +273,6 @@ struct SettingsPanel: View {
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: showBugReport)
     }
 
-    // MARK: - Thermal Advisor
-
-    @ViewBuilder
-    private var thermalAdvisorCard: some View {
-        let advisor = ThermalAdvisor.shared
-        // Config only — the live load gauges + diagnosis live in the main panel's
-        // Load tab. Here the user toggles the Load tab, sets the key (for AI
-        // diagnosis), and the auto-when-hot opt-in.
-        VStack(alignment: .leading, spacing: 10) {
-            Toggle(isOn: Binding(
-                get: { AppDefaults.userDefaults.object(forKey: "loadTabEnabled") as? Bool ?? true },
-                set: { AppDefaults.userDefaults.set($0, forKey: "loadTabEnabled") }
-            )) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(L.loadTab)
-                        .font(.system(size: 13, weight: .medium))
-                    Text(L.loadTabDesc)
-                        .font(.system(size: 10))
-                        .foregroundStyle(.tertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .toggleStyle(.switch)
-            .tint(.accentColor)
-
-            Divider().opacity(0.2)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(L.anthropicKey)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
-                HStack(spacing: 6) {
-                    SecureField("sk-ant-...", text: $apiKeyDraft)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 11, design: .monospaced))
-                    Button(L.save) { advisor.setAPIKey(apiKeyDraft) }
-                        .font(.system(size: 11, weight: .medium))
-                        .buttonStyle(.glass)
-                        .disabled(apiKeyDraft.isEmpty)
-                }
-            }
-
-            Divider().opacity(0.2)
-
-            Toggle(isOn: Binding(
-                get: { advisor.isEnabled },
-                set: { advisor.isEnabled = $0 }
-            )) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(L.autoDiagnoseWhenHot)
-                        .font(.system(size: 13, weight: .medium))
-                    Text(L.thermalAdvisorPrivacy)
-                        .font(.system(size: 10))
-                        .foregroundStyle(.tertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .toggleStyle(.switch)
-            .tint(.accentColor)
-            .disabled(!advisor.hasAPIKey)
-        }
-        .padding(12)
-        .premiumCard()
-        .onAppear {
-            // Seed once; don't clobber an unsaved edit on re-appear.
-            if apiKeyDraft.isEmpty { apiKeyDraft = advisor.apiKey ?? "" }
-        }
-    }
-
     // MARK: - Accounts
 
     /// Lists every login found on the machine with a monitor toggle. "Remove"
@@ -390,16 +315,18 @@ struct SettingsPanel: View {
 
                     Spacer()
 
-                    Button {
-                        registry.remove(account)
-                        appState.reloadAccounts()
-                    } label: {
-                        Image(systemName: "trash")
-                            .font(.system(size: 10))
-                            .foregroundStyle(.secondary)
+                    if !account.isDefault {
+                        Button {
+                            registry.remove(account)
+                            appState.reloadAccounts()
+                        } label: {
+                            Image(systemName: "trash")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help(registry.canDelete(account) ? L.removeAccount : L.dismissAccount)
                     }
-                    .buttonStyle(.plain)
-                    .help(registry.canDelete(account) ? L.removeAccount : L.dismissAccount)
 
                     Toggle("", isOn: Binding(
                         get: { !registry.isHidden(account.id) },
@@ -417,7 +344,7 @@ struct SettingsPanel: View {
                 .padding(.horizontal, 8)
             }
 
-            if !registry.dismissed.isEmpty {
+            if registry.dismissedCount > 0 {
                 Divider().opacity(0.2)
                 Button {
                     registry.restoreDismissed()
@@ -426,7 +353,7 @@ struct SettingsPanel: View {
                     HStack(spacing: 4) {
                         Image(systemName: "arrow.uturn.backward")
                             .font(.system(size: 9))
-                        Text("\(L.restoreRemoved) (\(registry.dismissed.count))")
+                        Text("\(L.restoreRemoved) (\(registry.dismissedCount))")
                             .font(.system(size: 10))
                     }
                     .foregroundStyle(.secondary)
@@ -461,6 +388,13 @@ struct SettingsPanel: View {
             }
             .padding(8)
 
+            Text(L.addPlanHint)
+                .font(.system(size: 9))
+                .foregroundStyle(.tertiary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 8)
+                .padding(.bottom, registry.addStatus == nil ? 8 : 2)
+
             if let status = registry.addStatus {
                 Text(status)
                     .font(.system(size: 10))
@@ -482,12 +416,18 @@ struct SettingsPanel: View {
     }
 
     private func accountSourceNote(_ account: ProviderAccount) -> String {
-        if account.isDefault { return "CLI 기본 계정" }
-        if account.id.contains(":own:") { return "Token Burn에서 추가" }
-        switch account.source {
-        case .file: return "외부 앱 관리 (파일)"
-        case .keychain: return "외부 앱 관리 (키체인)"
+        let source: String
+        if account.isDefault {
+            source = "CLI 기본 계정"
+        } else if account.id.contains(":own:") {
+            source = "Token Burn에서 추가"
+        } else {
+            switch account.source {
+            case .file: source = "외부 앱 관리 (파일)"
+            case .keychain: source = "외부 앱 관리 (키체인)"
+            }
         }
+        return [account.planName, source].compactMap { $0 }.joined(separator: " · ")
     }
 
     // MARK: - Settings Helpers
