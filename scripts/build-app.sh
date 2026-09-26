@@ -31,6 +31,13 @@ mkdir -p "$APP_BUNDLE/Contents/Frameworks"
 
 cp "$BUILD_DIR/AIUsageMeter" "$APP_BUNDLE/Contents/MacOS/"
 
+# A second copy, signed on its own below, is what gets installed outside the
+# bundle (LaunchAgentRedirect, Updater). The bundle's executable is sealed to the
+# bundle and would have to be re-signed ad hoc once copied out — a new identity
+# on every install, and a Keychain password dialog for every stored secret.
+mkdir -p "$APP_BUNDLE/Contents/Helpers"
+cp "$BUILD_DIR/AIUsageMeter" "$APP_BUNDLE/Contents/Helpers/AIUsageMeter"
+
 if [ -d "$BUILD_DIR/Sparkle.framework" ]; then
     cp -R "$BUILD_DIR/Sparkle.framework" "$APP_BUNDLE/Contents/Frameworks/"
     if ! otool -l "$APP_BUNDLE/Contents/MacOS/AIUsageMeter" | grep -q "@executable_path/../Frameworks"; then
@@ -98,8 +105,21 @@ echo -n "APPL????" > "$APP_BUNDLE/Contents/PkgInfo"
 echo "✅ App bundle created: $APP_BUNDLE"
 
 echo "🔐 Signing app with Developer ID..."
-codesign --force --deep --options runtime --timestamp --sign "$SIGNING_IDENTITY" "$APP_BUNDLE"
-codesign --verify --verbose "$APP_BUNDLE"
+# Inside out, so each piece keeps the identity it needs: Sparkle under our team
+# (the installed copy loads it under library validation), the standalone copy as
+# com.aiusagemeter (the identity Keychain grants are recorded against), then the
+# bundle, which seals both.
+if [ -d "$APP_BUNDLE/Contents/Frameworks/Sparkle.framework" ]; then
+    codesign --force --deep --options runtime --timestamp --sign "$SIGNING_IDENTITY" \
+        "$APP_BUNDLE/Contents/Frameworks/Sparkle.framework"
+fi
+codesign --force --options runtime --timestamp --identifier com.aiusagemeter \
+    --sign "$SIGNING_IDENTITY" "$APP_BUNDLE/Contents/Helpers/AIUsageMeter"
+codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" "$APP_BUNDLE"
+codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
+codesign --verify --strict \
+    -R="identifier \"com.aiusagemeter\" and anchor apple generic and certificate leaf[subject.OU] = \"$TEAM_ID\"" \
+    "$APP_BUNDLE/Contents/Helpers/AIUsageMeter"
 echo "✅ App signed successfully"
 
 DMG_NAME="AIUsageMeter-$VERSION.dmg"
@@ -212,23 +232,13 @@ echo "✅ DMG created: $DMG_PATH"
 # Local install (binary + Sparkle to ~/Library/Application Support/TokenBurn/)
 INSTALL_DIR="$HOME/Library/Application Support/TokenBurn"
 mkdir -p "$INSTALL_DIR"
-cp "$BUILD_DIR/AIUsageMeter" "$INSTALL_DIR/"
-if [ -d "$BUILD_DIR/Sparkle.framework" ]; then
+# Install exactly what users get: the separately signed standalone copy and the
+# bundle's team-signed Sparkle. Its Developer ID signature is what Keychain
+# grants are recorded against, so it is never re-signed here.
+cp "$APP_BUNDLE/Contents/Helpers/AIUsageMeter" "$INSTALL_DIR/AIUsageMeter"
+if [ -d "$APP_BUNDLE/Contents/Frameworks/Sparkle.framework" ]; then
     rm -rf "$INSTALL_DIR/Sparkle.framework"
-    cp -R "$BUILD_DIR/Sparkle.framework" "$INSTALL_DIR/"
-fi
-# launchd validates restarts against the service's registered code-signing
-# identity; a swapped binary must be re-signed and the agent re-bootstrapped,
-# or kickstart dies with OS_REASON_CODESIGNING.
-# Prefer Developer ID: keychain "Always Allow" grants bind to the signature's
-# designated requirement, so a stable identity keeps them across updates —
-# ad-hoc signatures change every build and re-trigger the ACL prompt.
-# (No --options runtime here: hardened-runtime library validation would reject
-# the separately-signed Sparkle.framework.)
-if security find-identity -v -p codesigning 2>/dev/null | grep -q "$TEAM_ID"; then
-    codesign --force --timestamp --identifier com.aiusagemeter --sign "$SIGNING_IDENTITY" "$INSTALL_DIR/AIUsageMeter"
-else
-    codesign --force --sign - "$INSTALL_DIR/AIUsageMeter"
+    cp -R "$APP_BUNDLE/Contents/Frameworks/Sparkle.framework" "$INSTALL_DIR/"
 fi
 
 # Install LaunchAgent

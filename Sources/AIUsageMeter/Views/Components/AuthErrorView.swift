@@ -4,6 +4,8 @@ import SwiftUI
 struct AuthErrorView: View {
     let service: ServiceViewModel
     var onRefresh: (() -> Void)?
+    /// Opens the Keychain's dialog for this account. The one place it may appear.
+    var onGrantAccess: (() -> Void)?
 
     var body: some View {
         VStack(spacing: 10) {
@@ -24,7 +26,8 @@ struct AuthErrorView: View {
                 // A missing Keychain grant is fixed by retrying with UI allowed,
                 // not by signing in again — offering "log in" there would throw
                 // away a perfectly good credential.
-                Button(action: (needsKeychainGrant || isRateLimited) ? { onRefresh?() } : startBrowserLogin) {
+                Button(action: needsKeychainGrant ? { (onGrantAccess ?? onRefresh)?() }
+                                : (isRateLimited ? { onRefresh?() } : startBrowserLogin)) {
                     HStack(spacing: 6) {
                         if isLoggingIn {
                             ProgressView().controlSize(.small)

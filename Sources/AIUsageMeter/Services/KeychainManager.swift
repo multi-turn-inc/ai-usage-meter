@@ -2,6 +2,53 @@ import Foundation
 import Security
 import LocalAuthentication
 
+/// Keeps Keychain password dialogs off the screen.
+///
+/// Two locks because they cover different eras of the API: SecItem queries
+/// honour `kSecUseAuthenticationUIFail`, while the ACL prompt on a login-keychain
+/// item — and the unlock prompt of a locked keychain — predate it and answer only
+/// to the process-wide `SecKeychainSetUserInteractionAllowed`.
+///
+/// `install()` makes silence the process's resting state, so a Keychain call
+/// added anywhere later is silent without having to remember to be. `run` holds
+/// it for one call regardless; `allowingPrompt` lifts it for the one read the
+/// user asked for. The switch is global, so silent calls are counted and a
+/// dialog is only possible while none is in flight.
+enum KeychainSilence {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var silentCalls = 0
+    nonisolated(unsafe) private static var promptsAllowed = true
+
+    /// Call before the first Keychain access of the process.
+    static func install() {
+        lock.lock(); promptsAllowed = false; apply(); lock.unlock()
+    }
+
+    static func run<T>(_ body: () -> T) -> T {
+        lock.lock(); silentCalls += 1; apply(); lock.unlock()
+        defer { lock.lock(); silentCalls -= 1; apply(); lock.unlock() }
+        return body()
+    }
+
+    /// Only for a read the user explicitly asked for.
+    static func allowingPrompt<T>(_ body: () -> T) -> T {
+        lock.lock(); let resting = promptsAllowed; promptsAllowed = true; apply(); lock.unlock()
+        defer { lock.lock(); promptsAllowed = resting; apply(); lock.unlock() }
+        return body()
+    }
+
+    private static func apply() {
+        SecKeychainSetUserInteractionAllowed(promptsAllowed && silentCalls == 0)
+    }
+
+    /// A read query that fails instead of asking.
+    static func readQuery(_ base: [String: Any]) -> [String: Any] {
+        var query = base
+        query[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUIFail
+        return query
+    }
+}
+
 
 class KeychainManager {
     static let shared = KeychainManager()
@@ -22,6 +69,10 @@ class KeychainManager {
 
     private init() {}
 
+    // The app's own items never raise a prompt. An item this build can't use
+    // silently was written by differently signed code; it is treated as absent,
+    // not as a reason to ask for the login password.
+
     func save(_ value: String, for key: String) throws {
         guard let data = value.data(using: .utf8) else {
             throw KeychainError.encodingFailed
@@ -34,10 +85,11 @@ class KeychainManager {
             kSecValueData as String: data
         ]
 
-        // Delete existing item first
-        SecItemDelete(query as CFDictionary)
-
-        let status = SecItemAdd(query as CFDictionary, nil)
+        let status: OSStatus = KeychainSilence.run {
+            // Delete existing item first
+            SecItemDelete(query as CFDictionary)
+            return SecItemAdd(query as CFDictionary, nil)
+        }
 
         guard status == errSecSuccess else {
             throw KeychainError.saveFailed(status)
@@ -45,16 +97,16 @@ class KeychainManager {
     }
 
     func retrieve(for key: String) throws -> String {
-        let query: [String: Any] = [
+        let query = KeychainSilence.readQuery([
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: serviceName,
             kSecAttrAccount as String: key,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne
-        ]
+        ])
 
         var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        let status = KeychainSilence.run { SecItemCopyMatching(query as CFDictionary, &result) }
 
         guard status == errSecSuccess,
               let data = result as? Data,
@@ -72,20 +124,25 @@ class KeychainManager {
             kSecAttrAccount as String: key
         ]
 
-        let status = SecItemDelete(query as CFDictionary)
+        let status = KeychainSilence.run { SecItemDelete(query as CFDictionary) }
 
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw KeychainError.deleteFailed(status)
         }
     }
 
+    /// Whether an item is stored, from its attributes alone — reading the
+    /// secret just to test for presence is what used to prompt.
     func exists(for key: String) -> Bool {
-        do {
-            _ = try retrieve(for: key)
-            return true
-        } catch {
-            return false
-        }
+        let query = KeychainSilence.readQuery([
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: serviceName,
+            kSecAttrAccount as String: key,
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ])
+        var result: AnyObject?
+        return KeychainSilence.run { SecItemCopyMatching(query as CFDictionary, &result) } == errSecSuccess
     }
 
     // MARK: - Claude Code Credentials
@@ -294,21 +351,26 @@ class KeychainManager {
                 continue
             }
 
-            let dataQuery: [String: Any] = [
-                kSecClass as String: kSecClassGenericPassword,
-                kSecAttrService as String: service,
-                kSecAttrAccount as String: account,
-                kSecReturnData as String: true,
-                kSecMatchLimit as String: kSecMatchLimitOne
-            ]
-            let dataQueryWithUI = keychainQuery(dataQuery, allowInteraction: allowInteraction)
+            // Through the tool that wrote the item first — silent by construction —
+            // and only then the read that may ask, which the user started.
+            var data = SecurityToolReader.read(service: service, account: account)?.data(using: .utf8)
+            if data == nil {
+                let dataQuery: [String: Any] = [
+                    kSecClass as String: kSecClassGenericPassword,
+                    kSecAttrService as String: service,
+                    kSecAttrAccount as String: account,
+                    kSecReturnData as String: true,
+                    kSecMatchLimit as String: kSecMatchLimitOne
+                ]
+                let dataQueryWithUI = keychainQuery(dataQuery, allowInteraction: allowInteraction)
 
-            var dataResult: AnyObject?
-            let dataStatus = SecItemCopyMatching(dataQueryWithUI as CFDictionary, &dataResult)
+                var dataResult: AnyObject?
+                if KeychainSilence.allowingPrompt({ SecItemCopyMatching(dataQueryWithUI as CFDictionary, &dataResult) }) == errSecSuccess {
+                    data = dataResult as? Data
+                }
+            }
 
-            guard dataStatus == errSecSuccess,
-                  let data = dataResult as? Data,
-                  let creds = parseCredentials(from: data) else {
+            guard let data, let creds = parseCredentials(from: data) else {
                 continue
             }
 

@@ -2,15 +2,21 @@ import Foundation
 import Security
 import AIUsageMeterCore
 
-/// Supplies each account's OAuth credentials, and — critically — stops macOS from
-/// asking for the login password over and over.
+/// Supplies each account's OAuth credentials without ever putting a Keychain
+/// password dialog on screen by itself.
 ///
-/// A Keychain item's ACL lists the app that created it. Reading an item another
-/// app created (Claude Code's, or a launcher's) makes securityd prompt, and the
-/// "Always Allow" grant is fragile. So a foreign item is read exactly **once**
-/// and immediately copied into an item this app owns; every read after that hits
-/// our own copy and never prompts. Refreshed tokens are written only to our copy —
-/// we never write back into another app's item.
+/// Claude Code (and Orca) keep a login in a Keychain item written with the
+/// `security` tool, and that item trusts the tool — not this app. So it is read
+/// through the same tool (`SecurityToolReader`), which needs no grant at all,
+/// and copied into an item this app owns; later reads hit the copy until the
+/// source is written again. Refreshed tokens are written only to our copy —
+/// never back into another app's item.
+///
+/// Every read here is silent. Should one ever be refused — an item neither the
+/// tool nor this app may read unasked — the account reports that it needs
+/// access, and the Keychain's dialog appears only when the user asks for it
+/// (`grantAccess`). Dialogs that appeared on their own, on launch and on every
+/// refresh, are what this class exists to prevent.
 ///
 /// File-backed accounts (Codex `auth.json`, Claude's default `.credentials.json`)
 /// skip all of this: reading a file never prompts.
@@ -21,71 +27,35 @@ final class AccountCredentialStore {
     private let keychain = KeychainManager.shared
     /// In-memory cache so a refresh cycle doesn't re-read the same secret repeatedly.
     private var cache: [String: String] = [:]
-    /// Accounts whose source refused a silent read. Retrying costs nothing when
-    /// suppression works — but if it ever fails on some future OS, retrying is a
-    /// password prompt every refresh cycle, so one refusal ends the attempts until
-    /// the user asks for a refresh themselves.
+    /// Accounts whose source refused a silent read: they need the user's grant.
     private var silentReadRefused: Set<String> = []
 
     private init() {}
 
-    /// Raw credentials JSON for an account.
-    /// - Parameter allowImport: whether a *first-time* import from a foreign
-    ///   Keychain item may prompt. Background refreshes pass `false` so they stay
-    ///   silent; a user-initiated refresh passes `true`.
-    func rawCredentials(for account: ProviderAccount, allowImport: Bool) -> String? {
+    /// Raw credentials JSON for an account, read without any prompt.
+    func rawCredentials(for account: ProviderAccount) -> String? {
         switch account.source {
         case .file(let path):
             // Always read through: the CLI rewrites this file on its own refreshes.
             return try? String(contentsOfFile: path, encoding: .utf8)
 
         case .keychain(let service, let item):
-            // A login this app created is renewed by this app alone, and our copy
-            // holds the result. The CLI's item beside it was written once, at
+            let copy = ownedCopy(for: account)
+
+            // A write to the source after our copy was taken supersedes it: the
+            // user signed in again, or the CLI renewed a login it owns. A login
+            // this app created, though, is renewed by this app alone, and our copy
+            // holds the result — the CLI's item beside it was written once, at
             // sign-in, and still carries the refresh token our first renewal
-            // spent — re-adopting it, whether on a background read or an
-            // interactive one, is what killed these logins within a day. Only a
-            // newer write, the user signing in again, supersedes our copy;
-            // otherwise hand back our copy and let the caller renew it.
-            if account.isSelfManaged,
-               let copy = cache[account.id] ?? (try? keychain.retrieve(for: ownedKey(for: account))) {
-                cache[account.id] = copy
-                if let foreignWritten = AccountDiscovery.defaultKeychainModified(service, item),
-                   let ownWritten = ownedItemModified(account), foreignWritten > ownWritten,
-                   let fresh = allowImport
-                       ? readForeignKeychainItem(service: service, account: item)
-                       : readForeignKeychainItemSilently(service: service, account: item) {
-                    adopt(fresh, for: account)
-                    return fresh
-                }
+            // spent; re-adopting it is what killed these logins within a day. So
+            // that copy stands until the source is newer, even past expiry, and
+            // the caller renews it.
+            let usable = { (copy: String) in account.isSelfManaged || !self.isExpired(copy) }
+            if let copy, usable(copy), !sourceIsNewer(account, service: service, item: item) {
                 return copy
             }
 
-            // Interactive path: re-read the source so our copy can't drift. The
-            // owning app rotates these tokens, so a copy taken once and kept
-            // forever eventually stops authenticating. This read may prompt the
-            // first time; granting "Always Allow" puts this app on the item's ACL
-            // and later reads — including background ones — stay silent.
-            if allowImport, let fresh = readForeignKeychainItem(service: service, account: item) {
-                silentReadRefused.remove(account.id)
-                adopt(fresh, for: account)
-                return fresh
-            }
-
-            let copy = cache[account.id] ?? (try? keychain.retrieve(for: ownedKey(for: account)))
-            if let copy {
-                cache[account.id] = copy
-                if !isExpired(copy) { return copy }
-            }
-
-            // The copy is missing or has expired, so it is worth nothing as it
-            // stands. An access token lives about eight hours; the owning app
-            // refreshes the item and our snapshot of it simply rots, which is why
-            // accounts went red overnight and stayed red until someone clicked.
-            // Re-read the source with UI suppressed: if a previous grant put us on
-            // the item's ACL this succeeds silently and the account heals itself,
-            // and if it did not the call fails rather than raising a prompt behind
-            // the user's back.
+            // Missing, expired or superseded: read the source again, silently.
             if !silentReadRefused.contains(account.id) {
                 if let fresh = readForeignKeychainItemSilently(service: service, account: item) {
                     adopt(fresh, for: account)
@@ -93,24 +63,37 @@ final class AccountCredentialStore {
                 }
                 silentReadRefused.insert(account.id)
             }
-            // Hand back the stale copy anyway: an expired token produces a precise
-            // "this login went stale" from the API, which beats "no credentials".
-            return copy
+            // Without access to the source, an expired copy of a login its CLI
+            // renews would only produce a misleading "token expired"; report the
+            // missing access instead.
+            return copy.flatMap { usable($0) ? $0 : nil }
         }
+    }
+
+    /// Reads an account's source because the user asked — the "allow Keychain
+    /// access" button — or has just signed in from this app. The silent routes
+    /// go first, and for a Claude Code login one of them always works; the
+    /// Keychain's own dialog is the last resort, for an item nothing here may
+    /// read unasked. "Always Allow" there lasts: the app is signed the same way
+    /// across updates, so the grant still matches after the next one.
+    @discardableResult
+    func grantAccess(for account: ProviderAccount) -> Bool {
+        guard case .keychain(let service, let item) = account.source else { return true }
+        guard let fresh = readForeignKeychainItemSilently(service: service, account: item)
+                ?? readForeignKeychainItem(service: service, account: item) else { return false }
+        silentReadRefused.remove(account.id)
+        adopt(fresh, for: account)
+        return true
     }
 
     /// Re-reads an account's credentials right after its own CLI wrote them.
     ///
     /// Discarding the copy alone left a hole — the account had no readable
-    /// credentials at all until something later asked interactively, so finishing
-    /// a login put the row into a hard authentication error, which is the exact
-    /// opposite of what just happened.
+    /// credentials at all until something later asked, so finishing a login put
+    /// the row into an authentication error, the opposite of what just happened.
     func reimport(_ account: ProviderAccount) {
         forget(account)
-        guard case .keychain(let service, let item) = account.source else { return }
-        if let fresh = readForeignKeychainItem(service: service, account: item) {
-            adopt(fresh, for: account)
-        }
+        grantAccess(for: account)
     }
 
     /// Whether stored credentials have passed their expiry.
@@ -119,10 +102,10 @@ final class AccountCredentialStore {
         return Date().timeIntervalSince1970 * 1000 >= Double(expiresAtMs)
     }
 
-    /// True when this account still needs its one-time import (i.e. asking to
-    /// refresh it would surface a Keychain prompt).
+    /// True when this account can't be read until the user grants access.
     func needsImport(_ account: ProviderAccount) -> Bool {
         guard case .keychain = account.source else { return false }
+        if silentReadRefused.contains(account.id) { return true }
         if cache[account.id] != nil { return false }
         return !keychain.exists(for: ownedKey(for: account))
     }
@@ -137,33 +120,81 @@ final class AccountCredentialStore {
         cache[account.id] = nil
         silentReadRefused.remove(account.id)
         try? keychain.delete(for: ownedKey(for: account))
+        try? keychain.delete(for: legacyKey(for: account))
     }
 
     // MARK: - Internals
 
+    /// Our copy: from memory, else our item, else — once — the item an earlier
+    /// version kept under the old name, moved across without a prompt.
+    private func ownedCopy(for account: ProviderAccount) -> String? {
+        if let cached = cache[account.id] { return cached }
+        if let stored = try? keychain.retrieve(for: ownedKey(for: account)) {
+            cache[account.id] = stored
+            return stored
+        }
+        if let legacy = try? keychain.retrieve(for: legacyKey(for: account)) {
+            adopt(legacy, for: account)
+            try? keychain.delete(for: legacyKey(for: account))
+            return legacy
+        }
+        return nil
+    }
+
+    /// Whether the source item was written after our copy. Attributes only.
+    private func sourceIsNewer(_ account: ProviderAccount, service: String, item: String) -> Bool {
+        guard let sourceWritten = AccountDiscovery.defaultKeychainModified(service, item),
+              let ownWritten = ownedItemModified(account) else { return false }
+        return sourceWritten > ownWritten
+    }
+
     /// When our copy was last written. Attribute-only: never reads the secret.
     private func ownedItemModified(_ account: ProviderAccount) -> Date? {
-        let query: [String: Any] = [
+        let query = KeychainSilence.readQuery([
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: "com.aiusagemeter",
             kSecAttrAccount as String: ownedKey(for: account),
             kSecReturnAttributes as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
+        ])
         var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+        guard KeychainSilence.run({ SecItemCopyMatching(query as CFDictionary, &result) }) == errSecSuccess,
               let attributes = result as? [String: Any] else { return nil }
         return (attributes[kSecAttrModificationDate as String] as? Date)
             ?? (attributes[kSecAttrCreationDate as String] as? Date)
     }
 
-    /// Namespaced so an account's copy can never collide with other settings.
+    /// Our copies are kept apart per signing identity. An item can be read
+    /// without a prompt only by code meeting its creator's requirement, so a
+    /// differently signed build — an ad-hoc development build, or a copy an old
+    /// updater re-signed — writing into the shared item would lock the real
+    /// build out of it, and each lockout was a password dialog.
+    private static let signingNamespace: String = {
+        var code: SecCode?
+        var staticCode: SecStaticCode?
+        var info: CFDictionary?
+        guard SecCodeCopySelf([], &code) == errSecSuccess, let code,
+              SecCodeCopyStaticCode(code, [], &staticCode) == errSecSuccess, let staticCode,
+              SecCodeCopySigningInformation(staticCode, SecCSFlags(rawValue: kSecCSSigningInformation), &info) == errSecSuccess,
+              let details = info as? [String: Any] else { return "unsigned" }
+        if let team = details[kSecCodeInfoTeamIdentifier as String] as? String { return team }
+        if let unique = details[kSecCodeInfoUnique as String] as? Data {
+            return "adhoc-" + unique.prefix(6).map { String(format: "%02x", $0) }.joined()
+        }
+        return "unsigned"
+    }()
+
     private func ownedKey(for account: ProviderAccount) -> String {
+        "account-credentials.\(Self.signingNamespace):\(account.id)"
+    }
+
+    /// Where versions up to 4.5.0 kept the copy, shared by every signature.
+    private func legacyKey(for account: ProviderAccount) -> String {
         "account-credentials:\(account.id)"
     }
 
-    /// The one interactive read. Deliberately allows UI: this is the single
-    /// prompt the user approves per account, after which the copy is ours.
+    /// The one read that may prompt. Called only from `grantAccess`, after the
+    /// silent routes have failed.
     private func readForeignKeychainItem(service: String, account: String) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -173,7 +204,7 @@ final class AccountCredentialStore {
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]
         var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+        guard KeychainSilence.allowingPrompt({ SecItemCopyMatching(query as CFDictionary, &result) }) == errSecSuccess,
               let data = result as? Data,
               let json = String(data: data, encoding: .utf8), !json.isEmpty else {
             return nil
@@ -181,33 +212,24 @@ final class AccountCredentialStore {
         return json
     }
 
-    /// The same read with every route to a password prompt closed off.
-    ///
-    /// Two locks because they cover different eras of the API: the modern
-    /// `SecItem` layer honours `kSecUseAuthenticationUIFail`, while the ACL prompt
-    /// on a login-keychain item predates it and answers to
-    /// `SecKeychainSetUserInteractionAllowed`. A silent read is only worth
-    /// attempting if it is genuinely silent — a background refresh that puts a
-    /// password dialog on screen is the failure this whole class exists to avoid.
+    /// The same read with every route to a dialog closed off: in-process where
+    /// an earlier grant covers this app, otherwise through the tool that wrote
+    /// the item.
     private func readForeignKeychainItemSilently(service: String, account: String) -> String? {
-        SecKeychainSetUserInteractionAllowed(false)
-        defer { SecKeychainSetUserInteractionAllowed(true) }
-
-        let query: [String: Any] = [
+        let query = KeychainSilence.readQuery([
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
-            kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail,
-        ]
+        ])
         var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data,
-              let json = String(data: data, encoding: .utf8), !json.isEmpty else {
-            return nil
+        if KeychainSilence.run({ SecItemCopyMatching(query as CFDictionary, &result) }) == errSecSuccess,
+           let data = result as? Data,
+           let json = String(data: data, encoding: .utf8), !json.isEmpty {
+            return json
         }
-        return json
+        return SecurityToolReader.read(service: service, account: account)
     }
 
     /// Replaces our copy with refreshed credentials. Only ever called for logins

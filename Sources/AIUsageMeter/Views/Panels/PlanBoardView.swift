@@ -126,7 +126,8 @@ private struct CurrentBlock: View {
 
             PlanHeading(row: row, prominent: true)
 
-            WindowsView(row: row, now: now, onRefresh: onRefresh)
+            WindowsView(row: row, now: now, onRefresh: onRefresh,
+                        onGrantAccess: { appState.grantKeychainAccess(for: row.login) })
 
             verdict
         }
@@ -342,7 +343,8 @@ private struct PlanRowView: View {
                 }
             }
 
-            WindowsView(row: row, now: now, onRefresh: onRefresh)
+            WindowsView(row: row, now: now, onRefresh: onRefresh,
+                        onGrantAccess: { appState.grantKeychainAccess(for: row.login) })
         }
         .padding(.vertical, 12)
         .contentShape(Rectangle())
@@ -399,7 +401,7 @@ private struct WorkspaceRowView: View {
             } else {
                 Button {
                     AccountRegistry.shared.addAccount(service: .codex, workspace: workspace.workspace) {
-                        appState.reloadAccounts(interactive: true)
+                        appState.reloadAccounts(interactive: false)
                     }
                 } label: {
                     HStack(spacing: 4) {
@@ -465,6 +467,8 @@ private struct WindowsView: View {
     let row: PlanRow
     let now: Date
     let onRefresh: () -> Void
+    /// The "allow Keychain access" button — the only way its dialog appears.
+    var onGrantAccess: (() -> Void)? = nil
 
     private var login: ServiceViewModel { row.login }
     private var brand: Color { row.service.brandColor }
@@ -484,7 +488,7 @@ private struct WindowsView: View {
                 Spacer()
             }
         } else if login.isAuthError {
-            AuthErrorView(service: login, onRefresh: onRefresh)
+            AuthErrorView(service: login, onRefresh: onRefresh, onGrantAccess: onGrantAccess)
         } else if !login.hasLoaded {
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)

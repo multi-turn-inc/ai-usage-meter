@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import Security
 
 /// macOS 26 workaround: an `NSStatusItem` created by the binary running *inside* the
 /// `.app` bundle (e.g. a double-click in /Applications) never appears in the menu bar.
@@ -60,15 +61,28 @@ enum LaunchAgentRedirect {
     /// Copy the current bundle's binary (and the Sparkle framework it links against) to the
     /// standalone location, mirroring the layout `build-app.sh` produces. Quarantine is cleared
     /// so launchd can start the notarized copy without a Gatekeeper prompt.
+    /// The copy of the executable a release bundle carries for exactly this: signed
+    /// on its own with the Developer ID, so it stays valid outside the bundle.
+    static func standaloneExecutable(inApp appURL: URL) -> URL {
+        appURL.appendingPathComponent("Contents/Helpers/AIUsageMeter")
+    }
+
     private static func syncStandaloneBinary() -> Bool {
         let fm = FileManager.default
         guard let bundleExec = Bundle.main.executablePath else { return false }
+        // Prefer the separately signed copy: it installs with its signature — and
+        // every Keychain "Always Allow" granted to that signature — intact. The
+        // bundle's own executable is sealed to the bundle and stops verifying
+        // once copied out, which is why it had to be re-signed ad hoc: a new
+        // identity on every install, and a password dialog per stored secret.
+        let signedCopy = standaloneExecutable(inApp: Bundle.main.bundleURL).path
+        let source = fm.fileExists(atPath: signedCopy) ? signedCopy : bundleExec
 
         do {
             try fm.createDirectory(at: installDir, withIntermediateDirectories: true)
 
             try? fm.removeItem(at: standaloneBinary)
-            try fm.copyItem(atPath: bundleExec, toPath: standaloneBinary.path)
+            try fm.copyItem(atPath: source, toPath: standaloneBinary.path)
 
             // The binary links Sparkle via an @loader_path rpath, so the framework must sit
             // beside the binary for dyld to resolve it.
@@ -96,12 +110,29 @@ enum LaunchAgentRedirect {
     /// Shared with the auto-updater, which likewise drops a bundle-signed binary at this path.
     @discardableResult
     static func makeStandaloneRunnable() -> Bool {
-        guard adhocSign(standaloneBinary) else {
-            NSLog("TokenBurn redirect: ad-hoc codesign failed for %@", standaloneBinary.path)
-            return false
+        // A copy that already carries this app's Developer ID signature is left
+        // as it is. Re-signing it ad hoc would give it a new identity, and the
+        // Keychain would ask for the password again for every item it had allowed.
+        if !hasStableSignature(standaloneBinary) {
+            guard adhocSign(standaloneBinary) else {
+                NSLog("TokenBurn redirect: ad-hoc codesign failed for %@", standaloneBinary.path)
+                return false
+            }
         }
         clearQuarantine(at: installDir)
         return true
+    }
+
+    /// Whether the binary is validly signed as this app by our team — the
+    /// identity Keychain grants are recorded against.
+    static func hasStableSignature(_ url: URL) -> Bool {
+        var code: SecStaticCode?
+        guard SecStaticCodeCreateWithPath(url as CFURL, [], &code) == errSecSuccess, let code else { return false }
+        let text = "identifier \"com.aiusagemeter\" and anchor apple generic and certificate leaf[subject.OU] = \"8V3Z27Z6RY\""
+        var requirement: SecRequirement?
+        guard SecRequirementCreateWithString(text as CFString, [], &requirement) == errSecSuccess,
+              let requirement else { return false }
+        return SecStaticCodeCheckValidity(code, SecCSFlags(rawValue: kSecCSCheckAllArchitectures), requirement) == errSecSuccess
     }
 
     private static func adhocSign(_ url: URL) -> Bool {

@@ -54,7 +54,7 @@ struct MainPanel: View {
             .padding(.vertical, 12)
 
             PlanBoardView(appState: appState) {
-                Task { await appState.refresh(interactive: true) }
+                Task { await appState.refresh(interactive: false) }
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 10)
@@ -80,7 +80,7 @@ struct MainPanel: View {
                 Spacer()
 
                 SpinningRefreshButton(isRefreshing: appState.isRefreshing) {
-                    Task { await appState.refresh(interactive: true) }
+                    Task { await appState.refresh(interactive: false) }
                 }
 
                 Button(action: { NSApplication.shared.terminate(nil) }) {

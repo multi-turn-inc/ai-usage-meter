@@ -68,14 +68,11 @@ class AppState {
         loadLaunchAtLoginState()
         showMenuBarLegendOnboarding = !AppDefaults.userDefaults.bool(forKey: OnboardingDefaults.didDismissMenuBarLegend)
 
-        // If credential file is missing, the first refresh must be interactive
-        // so Keychain access can restore it. Otherwise use non-interactive.
-        // A render run is unattended: it must never raise a Keychain prompt.
-        let isRenderRun = Self.isRenderRun
-        let needsInteractive = !KeychainManager.shared.hasCredentialFile() && !isRenderRun
-
-        if (!showMenuBarLegendOnboarding || isRenderRun) && !Self.isFixtureRun {
-            startRefreshWorkflowIfNeeded(interactive: needsInteractive)
+        // Refreshes never raise a Keychain dialog on their own — not on launch,
+        // not on a timer. An account that needs access says so and offers a
+        // button; see `grantKeychainAccess(for:)`.
+        if (!showMenuBarLegendOnboarding || Self.isRenderRun) && !Self.isFixtureRun {
+            startRefreshWorkflowIfNeeded(interactive: false)
         }
     }
 
@@ -199,12 +196,7 @@ class AppState {
     func dismissMenuBarLegendOnboarding() {
         AppDefaults.userDefaults.set(true, forKey: OnboardingDefaults.didDismissMenuBarLegend)
         showMenuBarLegendOnboarding = false
-        // Same rule as init(): if there's no credential file yet, the first
-        // refresh has to be interactive so Keychain can restore it. Without
-        // this recheck a fresh user would get a silent non-interactive refresh
-        // and stay stuck on "Loading" until the next 5-min cycle.
-        let needsInteractive = !KeychainManager.shared.hasCredentialFile()
-        startRefreshWorkflowIfNeeded(interactive: needsInteractive)
+        startRefreshWorkflowIfNeeded(interactive: false)
     }
 
     private func startRefreshWorkflowIfNeeded(interactive: Bool = false) {
@@ -333,10 +325,8 @@ class AppState {
         let work = DispatchWorkItem { [weak self] in
             print("🔄 Credential change detected → refreshing...")
             KeychainManager.shared.clearCredentialsCache()
-            // Use interactive: true so Keychain can restore the credential
-            // file if it was deleted (e.g. by Claude Code token refresh).
             Task { @MainActor in
-                await self?.refresh(interactive: true)
+                await self?.refresh(interactive: false)
             }
         }
         credentialRefreshDebounce = work
@@ -375,6 +365,20 @@ class AppState {
         }
 
         services = models
+    }
+
+    /// Lets the app read an account's Keychain item — the only path that shows the
+    /// Keychain's own dialog, and only because the user pressed the button for
+    /// it. "Always Allow" there lasts: the app is signed the same way across
+    /// updates, so the grant still matches after the next one.
+    func grantKeychainAccess(for login: ServiceViewModel) {
+        if let account = login.account {
+            AccountCredentialStore.shared.grantAccess(for: account)
+            Task { await refresh(interactive: false) }
+        } else {
+            // A row without an account reads the CLI's login the old way.
+            Task { await refresh(interactive: true) }
+        }
     }
 
     /// Rebuilds the rows after accounts are added, removed, or hidden, keeping

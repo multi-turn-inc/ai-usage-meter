@@ -17,8 +17,16 @@ struct AIUsageMeterApp: App {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let appState = AppState()
+    private let appState: AppState
     private var menuBarController: MenuBarPanelController?
+
+    override init() {
+        // Before AppState exists: its first refresh already touches the Keychain,
+        // and none of that may ever put a password dialog on screen.
+        KeychainSilence.install()
+        appState = AppState()
+        super.init()
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // macOS 26 workaround: when launched from inside the .app bundle (double-click),

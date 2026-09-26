@@ -174,13 +174,13 @@ class AnthropicClient: BaseAPIClient, AIServiceAPI {
     ///    there past their nominal expiry, so acting on it would only invent work.
     private func fetchUsage(for account: ProviderAccount) async throws -> UsageData {
         let store = await AccountCredentialStore.shared
-        guard let raw = await store.rawCredentials(for: account, allowImport: allowKeychainInteraction),
+        guard let raw = await store.rawCredentials(for: account),
               let credentials = ClaudeTokenRefresher.decode(raw) else {
             let needsImport = await store.needsImport(account)
             throw APIError.httpError(
                 statusCode: 401,
                 message: needsImport
-                    ? "\(account.label): 키체인 접근을 한 번 허용해 주세요 (새로고침)"
+                    ? "\(account.label): 키체인 접근을 한 번 허용해 주세요"
                     : "\(account.label): 자격증명을 찾을 수 없습니다"
             )
         }

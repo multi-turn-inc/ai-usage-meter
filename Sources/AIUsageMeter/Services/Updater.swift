@@ -183,10 +183,15 @@ class Updater {
                 detach.waitUntilExit()
             }
 
-            // Find the binary inside the .app in the DMG
+            // Find the binary inside the .app in the DMG. Releases carry a copy
+            // signed on its own (Contents/Helpers), which installs with its
+            // Developer ID signature intact; older ones only have the bundle's.
             let appName = "Token Burn.app"
             let appPath = "\(mountPoint)/\(appName)"
-            let binaryPath = "\(appPath)/Contents/MacOS/AIUsageMeter"
+            let signedCopy = LaunchAgentRedirect.standaloneExecutable(inApp: URL(fileURLWithPath: appPath)).path
+            let binaryPath = FileManager.default.fileExists(atPath: signedCopy)
+                ? signedCopy
+                : "\(appPath)/Contents/MacOS/AIUsageMeter"
 
             guard FileManager.default.fileExists(atPath: binaryPath) else {
                 openURL(urlString)
@@ -231,9 +236,10 @@ class Updater {
                 try? FileManager.default.copyItem(atPath: sparkleSource, toPath: sparkleDest.path)
             }
 
-            // The copied binary still carries the DMG bundle's signature, which seals that
-            // bundle's Info.plist — launchd would SIGKILL it. Re-sign ad-hoc to make it runnable.
-            // If re-signing fails, the new binary won't launch — roll back to the backup.
+            // A copy of the bundle's own executable carries a signature sealed to that
+            // bundle — launchd would SIGKILL it — so it is re-signed ad hoc; the
+            // separately signed copy is kept as it is. If making it runnable fails,
+            // the new binary won't launch — roll back to the backup.
             guard LaunchAgentRedirect.makeStandaloneRunnable() else {
                 restoreBackup()
                 self.error = "Update failed; reverted"

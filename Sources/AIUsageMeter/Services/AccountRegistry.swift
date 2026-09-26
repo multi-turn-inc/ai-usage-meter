@@ -169,7 +169,7 @@ final class AccountRegistry {
     /// A stable fingerprint of the account's access token, or nil when reading it
     /// would prompt. Never returns or logs the token itself.
     private func credentialFingerprint(for account: ProviderAccount) -> String? {
-        guard let raw = AccountCredentialStore.shared.rawCredentials(for: account, allowImport: false) else {
+        guard let raw = AccountCredentialStore.shared.rawCredentials(for: account) else {
             return nil
         }
         let token: String?
@@ -283,6 +283,11 @@ final class AccountRegistry {
             addStatus = "이미 등록된 계정입니다: \(displayName(for: existing))"
         } else {
             addStatus = "추가됨: \(displayName(for: added))"
+            // The CLI just wrote this login into a Keychain item of its own. Take
+            // it now, while the user is here: it reads silently through the tool
+            // that wrote it, and should that ever fail, this is the one moment a
+            // Keychain dialog is expected — not later, on a button.
+            AccountCredentialStore.shared.grantAccess(for: added)
         }
     }
 
