@@ -177,6 +177,50 @@ final class AccountDiscoveryTests: XCTestCase {
                        "A current file must not be abandoned for an older Keychain item")
     }
 
+    // MARK: The live store is asked for again rather than fixed at discovery
+    //
+    // The regression this guards: a browser re-login of the default account ran
+    // `claude auth login` with CLAUDE_CONFIG_DIR=~/.claude, which writes the
+    // scoped item. The next time the app built its rows it bound the default row
+    // to that item, and kept reading it after the CLI had renewed the unscoped
+    // item, so the row reported an expired login about eight hours after every
+    // re-login while the CLI was signed in and working.
+    func test_defaultLiveSource_followsTheStoreWrittenLast() {
+        let home = makeHome([:])
+        let scoped = AccountDiscovery.claudeScopedKeychainService(
+            forConfigDir: home.appendingPathComponent(".claude").path)
+        let unscoped = AccountDiscovery.claudeUnscopedKeychainService
+        let reLogin = Date().addingTimeInterval(-8 * 3600)
+
+        func live(unscopedWrittenAt: Date) -> ProviderAccount.CredentialSource? {
+            AccountDiscovery.claudeDefaultLiveSource(home: home, keychainModified: { service, _ in
+                switch service {
+                case scoped: return reLogin
+                case unscoped: return unscopedWrittenAt
+                default: return nil
+                }
+            }, readsUnscopedItem: true)
+        }
+
+        XCTAssertEqual(live(unscopedWrittenAt: reLogin.addingTimeInterval(-60)),
+                       .keychain(service: scoped, account: NSUserName()))
+        XCTAssertEqual(live(unscopedWrittenAt: reLogin.addingTimeInterval(7 * 3600)),
+                       .keychain(service: unscoped, account: NSUserName()),
+                       "Once the CLI renews its own item, that item is the one to read")
+    }
+
+    func test_discoveredDefaultAccount_usesTheLiveSource() {
+        let home = makeHome([".claude/.credentials.json": #"{"claudeAiOauth":{"accessToken":"old"}}"#])
+        let scoped = AccountDiscovery.claudeScopedKeychainService(
+            forConfigDir: home.appendingPathComponent(".claude").path)
+        let modified: AccountDiscovery.KeychainTimestampReader = { service, _ in
+            service == scoped ? Date().addingTimeInterval(3600) : nil
+        }
+
+        XCTAssertEqual(AccountDiscovery.discoverClaude(home: home, keychainModified: modified).first?.source,
+                       AccountDiscovery.claudeDefaultLiveSource(home: home, keychainModified: modified))
+    }
+
     // MARK: A machine that only ever had the Keychain item still has an account
     func test_defaultAccount_isFoundWithNoCredentialsFileAtAll() {
         let home = makeHome([".claude.json": #"{"oauthAccount":{"emailAddress":"me@example.com"}}"#])

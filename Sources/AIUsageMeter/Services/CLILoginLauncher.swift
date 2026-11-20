@@ -46,9 +46,17 @@ final class CLILoginLauncher {
                                                 forcedWorkspace: forcedWorkspace)
 
         var environment = ProcessInfo.processInfo.environment
-        // Point the CLI at *this* account's home so a multi-account machine
-        // re-authenticates the row the user clicked, not the default login.
-        if let configDir = account?.configDir {
+        if service == .claude, account?.isDefault ?? true {
+            // The default login has to land where the user's own CLI reads it.
+            // Claude Code scopes its Keychain item by config dir whenever
+            // CLAUDE_CONFIG_DIR is set, even to ~/.claude, so pointing the login
+            // there put it in an item that a CLI run without the variable never
+            // reads or renews, and the row died again about eight hours later.
+            environment.removeValue(forKey: "CLAUDE_CONFIG_DIR")
+            environment.removeValue(forKey: "CLAUDE_SECURESTORAGE_CONFIG_DIR")
+        } else if let configDir = account?.configDir {
+            // Point the CLI at *this* account's home so a multi-account machine
+            // re-authenticates the row the user clicked, not the default login.
             switch service {
             case .claude: environment["CLAUDE_CONFIG_DIR"] = configDir
             case .codex: environment["CODEX_HOME"] = configDir
