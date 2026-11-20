@@ -172,30 +172,36 @@ public enum AccountDiscovery {
 
     // MARK: - Claude
 
+    /// Where the CLI default login is live right now.
+    ///
+    /// Its credentials can sit in three places, and a machine that has lived
+    /// through several Claude Code versions has all three:
+    ///   - the file ~/.claude/.credentials.json, which older versions wrote;
+    ///   - the unscoped Keychain item, which current versions write when
+    ///     CLAUDE_CONFIG_DIR is unset — the everyday case;
+    ///   - the item scoped to ~/.claude, written only when CLAUDE_CONFIG_DIR
+    ///     was set to ~/.claude explicitly, as a launcher does.
+    /// The ones not in use stay frozen at whatever token they last held.
+    /// Reading the scoped item alone reported the everyday login as expired
+    /// for weeks while the CLI was signed in and working. Whichever store was
+    /// written last is the live one.
+    ///
+    /// The answer changes while the app runs, because the CLI renews one store
+    /// and a launcher another, so whoever holds on to the default account asks
+    /// again instead of trusting the source it was discovered with. Only
+    /// attributes are read: no secret, no prompt.
+    ///
     /// - Parameter readsUnscopedItem: whether the unscoped Keychain item speaks
     ///   for this `home`. It belongs to the signed-in user rather than to a
     ///   path, so by default only the real home consults it.
-    public static func discoverClaude(
+    public static func claudeDefaultLiveSource(
         home: URL,
         keychainModified: @escaping KeychainTimestampReader = defaultKeychainModified,
         readsUnscopedItem: Bool? = nil
-    ) -> [ProviderAccount] {
-        var accounts: [ProviderAccount] = []
+    ) -> ProviderAccount.CredentialSource? {
         let fm = FileManager.default
         let readsUnscoped = readsUnscopedItem
             ?? (home.standardizedFileURL == fm.homeDirectoryForCurrentUser.standardizedFileURL)
-
-        // 1. CLI default. Its credentials can sit in three places, and a machine
-        // that has lived through several Claude Code versions has all three:
-        //   - the file ~/.claude/.credentials.json, which older versions wrote;
-        //   - the unscoped Keychain item, which current versions write when
-        //     CLAUDE_CONFIG_DIR is unset — the everyday case;
-        //   - the item scoped to ~/.claude, written only when CLAUDE_CONFIG_DIR
-        //     was set to ~/.claude explicitly, as a launcher does.
-        // The ones not in use stay frozen at whatever token they last held.
-        // Reading the scoped item alone reported the everyday login as expired
-        // for weeks while the CLI was signed in and working. Whichever store was
-        // written last is the live one.
         let configDir = home.appendingPathComponent(".claude")
         let defaultCreds = configDir.appendingPathComponent(".credentials.json")
         let scopedService = claudeScopedKeychainService(forConfigDir: configDir.path)
@@ -211,14 +217,31 @@ public enum AccountDiscovery {
             },
         ].compactMap { $0 }
 
-        if let live = stores.max(by: { $0.writtenAt < $1.writtenAt }) {
+        return stores.max(by: { $0.writtenAt < $1.writtenAt })?.source
+    }
+
+    /// - Parameter readsUnscopedItem: whether the unscoped Keychain item speaks
+    ///   for this `home`. It belongs to the signed-in user rather than to a
+    ///   path, so by default only the real home consults it.
+    public static func discoverClaude(
+        home: URL,
+        keychainModified: @escaping KeychainTimestampReader = defaultKeychainModified,
+        readsUnscopedItem: Bool? = nil
+    ) -> [ProviderAccount] {
+        var accounts: [ProviderAccount] = []
+        let fm = FileManager.default
+
+        // 1. CLI default, from whichever of its stores is live.
+        let configDir = home.appendingPathComponent(".claude")
+        if let live = claudeDefaultLiveSource(home: home, keychainModified: keychainModified,
+                                              readsUnscopedItem: readsUnscopedItem) {
             let account = readJSONObject(at: home.appendingPathComponent(".claude.json"))?["oauthAccount"] as? [String: Any]
             accounts.append(makeClaudeAccount(
                 id: "claude:default",
                 identity: account,
-                source: live.source,
+                source: live,
                 isDefault: true,
-                fallbackKey: defaultCreds.path,
+                fallbackKey: configDir.appendingPathComponent(".credentials.json").path,
                 configDir: configDir.path
             ))
         }

@@ -34,7 +34,7 @@ final class AccountCredentialStore {
 
     /// Raw credentials JSON for an account, read without any prompt.
     func rawCredentials(for account: ProviderAccount) -> String? {
-        switch account.source {
+        switch liveSource(for: account) {
         case .file(let path):
             // Always read through: the CLI rewrites this file on its own refreshes.
             return try? String(contentsOfFile: path, encoding: .utf8)
@@ -78,7 +78,7 @@ final class AccountCredentialStore {
     /// across updates, so the grant still matches after the next one.
     @discardableResult
     func grantAccess(for account: ProviderAccount) -> Bool {
-        guard case .keychain(let service, let item) = account.source else { return true }
+        guard case .keychain(let service, let item) = liveSource(for: account) else { return true }
         guard let fresh = readForeignKeychainItemSilently(service: service, account: item)
                 ?? readForeignKeychainItem(service: service, account: item) else { return false }
         silentReadRefused.remove(account.id)
@@ -104,7 +104,7 @@ final class AccountCredentialStore {
 
     /// True when this account can't be read until the user grants access.
     func needsImport(_ account: ProviderAccount) -> Bool {
-        guard case .keychain = account.source else { return false }
+        guard case .keychain = liveSource(for: account) else { return false }
         if silentReadRefused.contains(account.id) { return true }
         if cache[account.id] != nil { return false }
         return !keychain.exists(for: ownedKey(for: account))
@@ -124,6 +124,24 @@ final class AccountCredentialStore {
     }
 
     // MARK: - Internals
+
+    /// Where to read `account` from now.
+    ///
+    /// Rows are built once, at launch, but the CLI default login moves between
+    /// its stores while the app runs: the CLI renews the unscoped Keychain item,
+    /// a launcher the item scoped to ~/.claude. Trusting the source the account
+    /// was discovered with kept a row on a store nobody renewed any more, and it
+    /// read an expired token while a fresh one sat in the store next to it. So
+    /// the default login is located again on every read. Attributes only, so
+    /// this never prompts.
+    private func liveSource(for account: ProviderAccount) -> ProviderAccount.CredentialSource {
+        guard account.service == .claude, account.isDefault,
+              let live = AccountDiscovery.claudeDefaultLiveSource(
+                  home: FileManager.default.homeDirectoryForCurrentUser) else {
+            return account.source
+        }
+        return live
+    }
 
     /// Our copy: from memory, else our item, else — once — the item an earlier
     /// version kept under the old name, moved across without a prompt.
